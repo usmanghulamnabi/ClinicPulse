@@ -31,8 +31,8 @@ const FAQS = [
     a: "Yes. Every list (patients, prescriptions, billing, inventory) supports CSV export, and prescriptions support PDF.",
   },
   {
-    q: "How does multi-branch isolation work?",
-    a: "Each branch has its own queue, inventory ledger, and finance. Admins can roll up reports across all branches.",
+    q: "Can I use this for one clinic only?",
+    a: "Yes. This build is configured for a single clinic workspace with one queue, one inventory ledger, and one reporting dashboard.",
   },
   {
     q: "Which integrations are supported?",

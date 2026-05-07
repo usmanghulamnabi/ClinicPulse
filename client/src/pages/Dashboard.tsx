@@ -5,7 +5,6 @@ import { KpiCard } from "@/components/KpiCard";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line, ResponsiveContainer,
@@ -13,11 +12,11 @@ import {
 } from "recharts";
 import {
   Users, Receipt, FileText, Boxes, AlertTriangle, CalendarRange, Plus, ArrowRight,
-  TrendingUp, Activity, Stethoscope, Pill, ShieldCheck, WalletCards, UserCheck,
+  TrendingUp, Activity, Pill, ShieldCheck, WalletCards, UserCheck,
 } from "lucide-react";
 import {
   dailyKPIs, monthlySeries, last30Days, peakHours, diseaseTrends, topMedicines,
-  doctorPerformance, MEDICINES, PATIENTS, PRESCRIPTIONS, APPOINTMENTS, DOCTORS, BRANCHES, PAYMENTS, fmtMoney,
+  MEDICINES, PATIENTS, PRESCRIPTIONS, APPOINTMENTS, PAYMENTS, fmtMoney,
 } from "@/lib/demo-data";
 
 const chartColors = ["hsl(var(--chart-1))","hsl(var(--chart-2))","hsl(var(--chart-3))","hsl(var(--chart-4))","hsl(var(--chart-5))"];
@@ -39,13 +38,6 @@ export default function Dashboard() {
   const collectionRate = Math.round((paidTotal / Math.max(1, billedTotal)) * 100);
   const grossMargin = Math.round((k.monthProfit / Math.max(1, k.monthRevenue)) * 100);
   const operationalScore = Math.max(78, Math.min(98, 100 - k.lowStock * 2 - k.expiringSoon + Math.round(grossMargin / 4)));
-  const branchPerformance = BRANCHES.map((b, i) => {
-    const branchPatients = PATIENTS.filter(p => p.branchId === b.id).length;
-    const branchAppointments = APPOINTMENTS.filter(a => a.branchId === b.id && a.status !== "cancelled").length;
-    const revenue = Math.round(k.monthRevenue * ([0.46, 0.32, 0.22][i] ?? 0.2));
-    return { ...b, patients: branchPatients, appointments: branchAppointments, revenue };
-  });
-
   return (
     <PageContainer>
       <PageHeader
@@ -79,7 +71,7 @@ export default function Dashboard() {
               Clinic operations are healthy, with revenue momentum and manageable stock risk.
             </h2>
             <p className="mt-2 max-w-2xl text-[13px] text-muted-foreground">
-              Monitor collections, margins, queue pressure, branch throughput, inventory exposure, and AI-prioritized work from a single operating dashboard.
+              Monitor collections, margins, queue pressure, inventory exposure, and AI-prioritized work from one clinic dashboard.
             </p>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -104,27 +96,30 @@ export default function Dashboard() {
           <Card className="border-card-border bg-card/70 p-4 backdrop-blur">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Branch roll-up</div>
+                <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Clinic snapshot</div>
                 <div className="text-[15px] font-semibold">Monthly performance</div>
               </div>
-              <Badge variant="secondary" className="bg-primary/10 text-primary border-primary/20">3 branches</Badge>
+              <Badge variant="secondary" className="bg-primary/10 text-primary border-primary/20">Single clinic</Badge>
             </div>
             <div className="space-y-4">
-              {branchPerformance.map((b, i) => (
-                <div key={b.id}>
+              {[
+                { name: "Patient visits", value: k.patientsTotal, total: Math.max(k.patientsTotal, 120), sub: `${k.appointmentsToday} appointments today` },
+                { name: "Collections", value: paidTotal, total: Math.max(billedTotal, 1), sub: `${collectionRate}% collection rate` },
+                { name: "Prescriptions", value: k.prescriptionsToday, total: Math.max(k.prescriptionsToday, 35), sub: `${PRESCRIPTIONS.length} prescriptions this month` },
+              ].map((row) => (
+                <div key={row.name}>
                   <div className="flex items-center justify-between text-[12.5px]">
-                    <div className="font-medium">{b.name}</div>
-                    <div className="num text-muted-foreground">{fmtMoney(b.revenue)}</div>
+                    <div className="font-medium">{row.name}</div>
+                    <div className="num text-muted-foreground">{typeof row.value === "number" && row.value > 1000 ? fmtMoney(row.value) : row.value}</div>
                   </div>
                   <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-muted">
                     <div
                       className="h-full rounded-full bg-gradient-to-r from-primary to-cyan-400"
-                      style={{ width: `${[88, 67, 49][i] ?? 50}%` }}
+                      style={{ width: `${Math.min(100, Math.round((row.value / row.total) * 100))}%` }}
                     />
                   </div>
                   <div className="mt-1 flex justify-between text-[11px] text-muted-foreground">
-                    <span>{b.patients} patients</span>
-                    <span>{b.appointments} appts</span>
+                    <span>{row.sub}</span>
                   </div>
                 </div>
               ))}
@@ -263,7 +258,6 @@ export default function Dashboard() {
           <div className="space-y-1.5">
             {todayAppts.map(a => {
               const p = PATIENTS.find(x => x.id === a.patientId)!;
-              const d = DOCTORS.find(x => x.id === a.doctorId)!;
               const time = new Date(a.scheduledAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
               const statusColor = {
                 scheduled:    "bg-muted text-muted-foreground",
@@ -278,7 +272,7 @@ export default function Dashboard() {
                   <div className="h-7 w-7 rounded-full bg-primary/10 grid place-items-center text-[10.5px] font-semibold text-primary">{a.token}</div>
                   <div className="min-w-0 flex-1">
                     <div className="text-[13.5px] font-medium truncate">{p.fullName}</div>
-                    <div className="text-[11.5px] text-muted-foreground truncate">{a.reason} · {d.fullName}</div>
+                    <div className="text-[11.5px] text-muted-foreground truncate">{a.reason} · <span className="capitalize">{a.channel.replace("_", " ")}</span></div>
                   </div>
                   <span className={`text-[10.5px] uppercase tracking-wider px-1.5 py-0.5 rounded ${statusColor}`}>{a.status.replace("_", " ")}</span>
                 </div>
@@ -319,41 +313,34 @@ export default function Dashboard() {
       </div>
 
       <div className="grid lg:grid-cols-3 gap-4">
-        {/* Doctor performance */}
+        {/* Clinic activity */}
         <Card className="p-5 border-card-border lg:col-span-2">
           <div className="flex items-center justify-between mb-3">
             <div>
-              <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Doctor performance</div>
-              <div className="mt-0.5 text-[15px] font-semibold">This month</div>
+              <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Clinic activity</div>
+              <div className="mt-0.5 text-[15px] font-semibold">Recent patient workload</div>
             </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
-                  <th className="text-left font-medium py-2">Doctor</th>
-                  <th className="text-right font-medium py-2">Patients</th>
-                  <th className="text-right font-medium py-2">Rx</th>
-                  <th className="text-right font-medium py-2">Revenue</th>
-                  <th className="text-right font-medium py-2">Rating</th>
+                  <th className="text-left font-medium py-2">Patient</th>
+                  <th className="text-left font-medium py-2">Diagnosis</th>
+                  <th className="text-right font-medium py-2">Age</th>
+                  <th className="text-right font-medium py-2">Last visit</th>
                 </tr>
               </thead>
               <tbody>
-                {doctorPerformance.map((d, i) => (
-                  <tr key={i} className="border-t border-border">
+                {recentPatients.map((p) => (
+                  <tr key={p.id} className="border-t border-border">
                     <td className="py-2.5">
-                      <div className="flex items-center gap-2">
-                        <Avatar className="h-7 w-7"><AvatarFallback className="bg-primary/10 text-primary text-[11px] font-semibold">{d.doctor.slice(0,2)}</AvatarFallback></Avatar>
-                        <div>
-                          <div className="font-medium">Dr. {d.doctor}</div>
-                          <div className="text-[11px] text-muted-foreground">{DOCTORS[i % DOCTORS.length].specialty}</div>
-                        </div>
-                      </div>
+                      <div className="font-medium">{p.fullName}</div>
+                      <div className="text-[11px] text-muted-foreground">{p.mrn}</div>
                     </td>
-                    <td className="text-right num">{d.patients}</td>
-                    <td className="text-right num">{d.prescriptions}</td>
-                    <td className="text-right num">{fmtMoney(d.revenue)}</td>
-                    <td className="text-right num">★ {d.rating}</td>
+                    <td className="py-2.5 text-muted-foreground">{p.diagnosis}</td>
+                    <td className="text-right num">{p.age}y</td>
+                    <td className="text-right num text-muted-foreground">{new Date(p.lastVisitAt).toLocaleDateString()}</td>
                   </tr>
                 ))}
               </tbody>

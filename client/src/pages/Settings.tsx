@@ -11,7 +11,7 @@ import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/components/AuthProvider";
 import { useTheme } from "@/components/ThemeProvider";
 import { useToast } from "@/hooks/use-toast";
-import { CLINIC, BRANCHES } from "@/lib/demo-data";
+import { CLINIC } from "@/lib/demo-data";
 import { Building2, Bell, CreditCard, Plug, Palette, ShieldCheck, Check } from "lucide-react";
 
 export default function Settings() {
@@ -109,7 +109,7 @@ export default function Settings() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2"><Building2 className="h-4 w-4"/>{CLINIC.name}</CardTitle>
-              <CardDescription>Workspace · {CLINIC.plan} plan · {BRANCHES.length} branches</CardDescription>
+              <CardDescription>Workspace · {CLINIC.plan} plan · single clinic</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid sm:grid-cols-2 gap-4">
@@ -128,21 +128,6 @@ export default function Settings() {
                 <div className="space-y-2">
                   <Label>Timezone</Label>
                   <Input defaultValue="Asia/Karachi" data-testid="input-timezone"/>
-                </div>
-              </div>
-              <Separator/>
-              <div className="space-y-2">
-                <Label>Branches</Label>
-                <div className="space-y-2">
-                  {BRANCHES.map(b => (
-                    <div key={b.id} className="flex items-center justify-between rounded-md border p-3">
-                      <div>
-                        <p className="text-sm font-medium">{b.name}</p>
-                        <p className="text-xs text-muted-foreground">{b.address} · {b.city}</p>
-                      </div>
-                      <Badge variant="outline">{b.phone}</Badge>
-                    </div>
-                  ))}
                 </div>
               </div>
             </CardContent>

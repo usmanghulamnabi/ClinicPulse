@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard, Users, FilePlus2, Pill, CalendarRange, Receipt, BarChart3,
   Bell, Search, Sun, Moon, Menu, X, Settings, LogOut, Shield, Activity,
-  Boxes, Stethoscope, Sparkles, Building2, BookOpenText, KeyRound, Hospital, FileBarChart,
+  Boxes, Stethoscope, Sparkles, BookOpenText, KeyRound, Hospital, FileBarChart, LockKeyhole,
 } from "lucide-react";
 import { Logo, LogoMark } from "./Logo";
 import { useTheme } from "./ThemeProvider";
@@ -19,8 +19,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { NOTIFICATIONS, fmtRelative, BRANCHES } from "@/lib/demo-data";
-import { useToast } from "@/hooks/use-toast";
+import { NOTIFICATIONS, fmtRelative, CLINIC } from "@/lib/demo-data";
 
 type NavItem = { href: string; label: string; icon: React.ElementType; roles?: string[]; badge?: string };
 
@@ -40,7 +39,6 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
       { href: "/inventory", label: "Inventory", icon: Pill, roles: ["admin", "pharmacist"] },
       { href: "/billing", label: "Billing", icon: Receipt, roles: ["admin", "receptionist", "pharmacist"] },
       { href: "/expenses", label: "Expenses", icon: Boxes, roles: ["admin"] },
-      { href: "/branches", label: "Branches", icon: Building2, roles: ["admin"] },
     ],
   },
   {
@@ -52,9 +50,15 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
+    title: "Admin",
+    items: [
+      { href: "/admin", label: "Admin", icon: LockKeyhole, roles: ["admin"] },
+      { href: "/audit", label: "Audit & Sessions", icon: Shield, roles: ["admin"] },
+    ],
+  },
+  {
     title: "Account",
     items: [
-      { href: "/audit", label: "Audit & Sessions", icon: Shield, roles: ["admin"] },
       { href: "/settings", label: "Settings", icon: Settings },
     ],
   },
@@ -67,8 +71,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [branch, setBranch] = useState(BRANCHES[0]);
-  const { toast } = useToast();
   const unread = NOTIFICATIONS.filter(n => !n.read).length;
 
   // Keyboard shortcuts: ⌘K, g+d/g+p, etc.
@@ -262,27 +264,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </button>
 
             <div className="ml-auto flex items-center gap-1.5">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="hidden sm:flex gap-2" data-testid="button-branch-switcher">
-                    <Hospital className="h-4 w-4" />
-                    <span className="text-[13px] font-medium">{branch.name}</span>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  <DropdownMenuLabel className="text-xs">Switch branch</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  {BRANCHES.map(b => (
-                    <DropdownMenuItem key={b.id} onClick={() => { setBranch(b); toast({ title: "Switched branch", description: `${b.name} · ${b.city}` }); }} data-testid={`item-branch-${b.id}`}>
-                      <Building2 className="h-4 w-4 mr-2 text-muted-foreground" />
-                      <div className="flex flex-col">
-                        <span className="text-[13px]">{b.name}</span>
-                        <span className="text-[11px] text-muted-foreground">{b.city}</span>
-                      </div>
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <div className="hidden sm:flex items-center gap-2 rounded-md border border-border bg-background/60 px-3 py-2 text-[13px] font-medium" data-testid="label-single-clinic">
+                <Hospital className="h-4 w-4 text-primary" />
+                <span>{CLINIC.name}</span>
+              </div>
 
               <Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle theme" data-testid="button-toggle-theme">
                 {theme === "dark" ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}

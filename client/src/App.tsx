@@ -19,10 +19,10 @@ import Appointments from "@/pages/Appointments";
 import Inventory from "@/pages/Inventory";
 import Billing from "@/pages/Billing";
 import Expenses from "@/pages/Expenses";
-import Branches from "@/pages/Branches";
 import Analytics from "@/pages/Analytics";
 import Reports from "@/pages/Reports";
 import AIInsights from "@/pages/AIInsights";
+import Admin from "@/pages/Admin";
 import Audit from "@/pages/Audit";
 import Settings from "@/pages/Settings";
 import PatientPortal from "@/pages/PatientPortal";
@@ -44,10 +44,10 @@ function AuthedRoutes() {
         <Route path="/inventory" component={Inventory} />
         <Route path="/billing" component={Billing} />
         <Route path="/expenses" component={Expenses} />
-        <Route path="/branches" component={Branches} />
         <Route path="/analytics" component={Analytics} />
         <Route path="/reports" component={Reports} />
         <Route path="/ai-insights" component={AIInsights} />
+        <Route path="/admin" component={Admin} />
         <Route path="/audit" component={Audit} />
         <Route path="/settings" component={Settings} />
         <Route path="/portal" component={PatientPortal} />

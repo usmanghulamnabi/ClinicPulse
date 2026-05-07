@@ -4,29 +4,40 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Search, Scan, FileDown, AlertTriangle, Clock } from "lucide-react";
+import { Plus, Search, Scan, FileDown, AlertTriangle, Clock, Trash2 } from "lucide-react";
 import { MEDICINES, fmtMoney } from "@/lib/demo-data";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/components/AuthProvider";
 
 export default function Inventory() {
   const [q, setQ] = useState("");
+  const [medicines, setMedicines] = useState(MEDICINES);
   const { toast } = useToast();
+  const { user } = useAuth();
+  const canDelete = user?.role === "admin";
 
-  const list = useMemo(() => MEDICINES.filter(m => {
+  const list = useMemo(() => medicines.filter(m => {
     if (!q) return true;
     const s = q.toLowerCase();
     return m.name.toLowerCase().includes(s) || m.generic.toLowerCase().includes(s) || m.company.toLowerCase().includes(s) || m.barcode.includes(q);
-  }), [q]);
+  }), [medicines, q]);
 
-  const totalValue = MEDICINES.reduce((s, m) => s + m.stock * m.purchasePrice, 0);
-  const lowStock = MEDICINES.filter(m => m.stock <= m.lowStockAt).length;
-  const expiringSoon = MEDICINES.filter(m => m.expiry - Date.now() < 60 * 86400_000).length;
+  const totalValue = medicines.reduce((s, m) => s + m.stock * m.purchasePrice, 0);
+  const lowStock = medicines.filter(m => m.stock <= m.lowStockAt).length;
+  const expiringSoon = medicines.filter(m => m.expiry - Date.now() < 60 * 86400_000).length;
+
+  const deleteMedicine = (id: number, name: string) => {
+    const ok = window.confirm(`Delete medicine "${name}" from inventory? This demo action removes the SKU from the current app session.`);
+    if (!ok) return;
+    setMedicines(current => current.filter(m => m.id !== id));
+    toast({ title: "Medicine deleted", description: `${name} was removed from inventory.` });
+  };
 
   return (
     <PageContainer>
       <PageHeader
         title="Inventory"
-        subtitle={`${MEDICINES.length} medicines · ${fmtMoney(totalValue)} total value`}
+        subtitle={`${medicines.length} medicines · ${fmtMoney(totalValue)} total value`}
         actions={
           <>
             <Button variant="outline" size="sm" className="gap-1.5" onClick={() => toast({ title: "Scanner ready", description: "Point your barcode reader at a medicine." })}>
@@ -42,7 +53,7 @@ export default function Inventory() {
         <Card className="p-4 border-card-border">
           <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Total value</div>
           <div className="text-xl font-semibold mt-1 num">{fmtMoney(totalValue)}</div>
-          <div className="text-[11px] text-muted-foreground mt-1">{MEDICINES.length} SKUs</div>
+          <div className="text-[11px] text-muted-foreground mt-1">{medicines.length} SKUs</div>
         </Card>
         <Card className="p-4 border-card-border">
           <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Low stock</div>
@@ -80,6 +91,7 @@ export default function Inventory() {
                 <th className="text-right font-medium px-4 py-2.5">Buy</th>
                 <th className="text-right font-medium px-4 py-2.5">Sell</th>
                 <th className="text-right font-medium px-4 py-2.5">Margin</th>
+                {canDelete && <th className="text-right font-medium px-4 py-2.5">Actions</th>}
               </tr>
             </thead>
             <tbody>
@@ -109,6 +121,20 @@ export default function Inventory() {
                     <td className="px-4 py-2.5 text-right num">₨ {m.purchasePrice}</td>
                     <td className="px-4 py-2.5 text-right num">₨ {m.sellingPrice}</td>
                     <td className="px-4 py-2.5 text-right num text-emerald-600 dark:text-emerald-400 font-medium">{margin}%</td>
+                    {canDelete && (
+                      <td className="px-4 py-2.5 text-right">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-rose-600"
+                          onClick={() => deleteMedicine(m.id, m.name)}
+                          aria-label={`Delete ${m.name}`}
+                          data-testid={`button-delete-medicine-${m.id}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </td>
+                    )}
                   </tr>
                 );
               })}

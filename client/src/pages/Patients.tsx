@@ -13,28 +13,37 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Plus, Search, Filter, FileDown, Phone, MapPin, ShieldAlert } from "lucide-react";
-import { PATIENTS, BRANCHES, DOCTORS, fmtRelative } from "@/lib/demo-data";
+import { Plus, Search, FileDown, Phone, MapPin, ShieldAlert, Trash2 } from "lucide-react";
+import { PATIENTS, fmtRelative } from "@/lib/demo-data";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/components/AuthProvider";
 
 export default function Patients() {
   const [q, setQ] = useState("");
   const [gender, setGender] = useState<string>("all");
-  const [branchId, setBranchId] = useState<string>("all");
+  const [patients, setPatients] = useState(PATIENTS);
   const { toast } = useToast();
+  const { user } = useAuth();
+  const canDelete = user?.role === "admin";
 
-  const filtered = useMemo(() => PATIENTS.filter(p => {
+  const filtered = useMemo(() => patients.filter(p => {
     if (gender !== "all" && p.gender !== gender) return false;
-    if (branchId !== "all" && String(p.branchId) !== branchId) return false;
     if (q && !(p.fullName.toLowerCase().includes(q.toLowerCase()) || p.mrn.toLowerCase().includes(q.toLowerCase()) || p.phone.includes(q))) return false;
     return true;
-  }), [q, gender, branchId]);
+  }), [patients, q, gender]);
+
+  const deletePatient = (id: number, name: string) => {
+    const ok = window.confirm(`Delete patient "${name}" from this clinic workspace? This demo action removes the record from the current app session.`);
+    if (!ok) return;
+    setPatients(current => current.filter(p => p.id !== id));
+    toast({ title: "Patient deleted", description: `${name} was removed from the patient list.` });
+  };
 
   return (
     <PageContainer>
       <PageHeader
         title="Patients"
-        subtitle={`${PATIENTS.length} total · ${filtered.length} matching filters`}
+        subtitle={`${patients.length} total · ${filtered.length} matching filters`}
         actions={
           <>
             <Button variant="outline" size="sm" className="gap-1.5" onClick={() => toast({ title: "Export queued", description: "CSV will download shortly." })}>
@@ -109,14 +118,6 @@ export default function Patients() {
                 <SelectItem value="F">Female</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={branchId} onValueChange={setBranchId}>
-              <SelectTrigger className="h-9 w-[160px]"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All branches</SelectItem>
-                {BRANCHES.map(b => <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Button variant="outline" size="icon" className="h-9 w-9"><Filter className="h-4 w-4" /></Button>
           </div>
         </div>
       </Card>
@@ -129,15 +130,12 @@ export default function Patients() {
                 <th className="text-left font-medium px-4 py-2.5">Patient</th>
                 <th className="text-left font-medium px-4 py-2.5">Contact</th>
                 <th className="text-left font-medium px-4 py-2.5">Diagnosis</th>
-                <th className="text-left font-medium px-4 py-2.5">Doctor</th>
-                <th className="text-left font-medium px-4 py-2.5">Branch</th>
                 <th className="text-right font-medium px-4 py-2.5">Last visit</th>
+                {canDelete && <th className="text-right font-medium px-4 py-2.5">Actions</th>}
               </tr>
             </thead>
             <tbody>
               {filtered.slice(0, 50).map(p => {
-                const d = DOCTORS.find(x => x.id === p.doctorId);
-                const b = BRANCHES.find(x => x.id === p.branchId);
                 return (
                   <tr key={p.id} className="border-t border-border hover:bg-muted/30">
                     <td className="px-4 py-2.5">
@@ -159,9 +157,21 @@ export default function Patients() {
                       <div className="flex items-center gap-1.5 text-[11px] mt-0.5"><MapPin className="h-3 w-3" /><span className="truncate max-w-[180px]">{p.address}</span></div>
                     </td>
                     <td className="px-4 py-2.5 truncate max-w-[180px]">{p.diagnosis}</td>
-                    <td className="px-4 py-2.5 truncate">{d?.fullName}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground">{b?.name}</td>
                     <td className="px-4 py-2.5 text-right text-muted-foreground tabular-nums">{fmtRelative(p.lastVisitAt)}</td>
+                    {canDelete && (
+                      <td className="px-4 py-2.5 text-right">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-rose-600"
+                          onClick={() => deletePatient(p.id, p.fullName)}
+                          aria-label={`Delete ${p.fullName}`}
+                          data-testid={`button-delete-patient-${p.id}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </td>
+                    )}
                   </tr>
                 );
               })}

@@ -3,7 +3,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FileDown, FileSpreadsheet, FileBarChart, FileText, ArrowRight } from "lucide-react";
-import { fmtMoney, monthlySeries, dailyKPIs, doctorPerformance } from "@/lib/demo-data";
+import { fmtMoney, monthlySeries, dailyKPIs } from "@/lib/demo-data";
 import { useToast } from "@/hooks/use-toast";
 
 const reports = [
@@ -13,7 +13,6 @@ const reports = [
   { id: "inv",          title: "Inventory valuation",    desc: "SKU-level stock, expiry and cost data." },
   { id: "med",          title: "Medicine usage",         desc: "Most prescribed and dispensed medicines." },
   { id: "appt",         title: "Appointments",           desc: "Booked, completed, no-show and cancellation report." },
-  { id: "doc",          title: "Doctor performance",     desc: "Per-doctor patients, Rx, revenue and rating." },
   { id: "disease",      title: "Disease trends",         desc: "ICD-aligned disease frequency over time." },
   { id: "close",        title: "Daily closing",          desc: "Cash drawer, dues, deposits and end-of-day summary." },
   { id: "audit",        title: "Audit & compliance",     desc: "User actions, sessions, login activity." },
@@ -43,7 +42,6 @@ export default function Reports() {
           <TabsTrigger value="library" className="text-[12px]">Library</TabsTrigger>
           <TabsTrigger value="closing" className="text-[12px]">Daily closing</TabsTrigger>
           <TabsTrigger value="financial" className="text-[12px]">Financial summary</TabsTrigger>
-          <TabsTrigger value="doctors" className="text-[12px]">Doctor analytics</TabsTrigger>
         </TabsList>
 
         <TabsContent value="library" className="mt-4">
@@ -72,7 +70,7 @@ export default function Reports() {
           <Card className="p-6 border-card-border">
             <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Daily closing — {new Date().toLocaleDateString()}</div>
             <div className="text-2xl font-semibold mt-1 num">{fmtMoney(k.todayRevenue)}</div>
-            <div className="text-[12px] text-muted-foreground">collected today across all branches</div>
+            <div className="text-[12px] text-muted-foreground">collected today in your clinic</div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-5">
               {[
@@ -116,33 +114,6 @@ export default function Reports() {
                     <td className="px-4 py-2.5 text-right num">{((m.profit/m.revenue)*100).toFixed(1)}%</td>
                     <td className="px-4 py-2.5 text-right num">{m.patients}</td>
                     <td className="px-4 py-2.5 text-right num">{m.prescriptions}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="doctors" className="mt-4">
-          <Card className="border-card-border overflow-hidden">
-            <table className="w-full text-[13px]">
-              <thead className="bg-muted/40">
-                <tr className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
-                  <th className="text-left px-4 py-2.5 font-medium">Doctor</th>
-                  <th className="text-right px-4 py-2.5 font-medium">Patients</th>
-                  <th className="text-right px-4 py-2.5 font-medium">Prescriptions</th>
-                  <th className="text-right px-4 py-2.5 font-medium">Revenue</th>
-                  <th className="text-right px-4 py-2.5 font-medium">Rating</th>
-                </tr>
-              </thead>
-              <tbody>
-                {doctorPerformance.map((d, i) => (
-                  <tr key={i} className="border-t border-border">
-                    <td className="px-4 py-2.5 font-medium">Dr. {d.doctor}</td>
-                    <td className="px-4 py-2.5 text-right num">{d.patients}</td>
-                    <td className="px-4 py-2.5 text-right num">{d.prescriptions}</td>
-                    <td className="px-4 py-2.5 text-right num">{fmtMoney(d.revenue)}</td>
-                    <td className="px-4 py-2.5 text-right num">★ {d.rating}</td>
                   </tr>
                 ))}
               </tbody>

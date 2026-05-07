@@ -8,7 +8,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Plus, ChevronLeft, ChevronRight, Clock, Bell, MessageSquare, Phone, MapPin, CalendarRange,
 } from "lucide-react";
-import { APPOINTMENTS, PATIENTS, DOCTORS, BRANCHES } from "@/lib/demo-data";
+import { APPOINTMENTS, PATIENTS } from "@/lib/demo-data";
 import { useToast } from "@/hooks/use-toast";
 
 export default function Appointments() {
@@ -36,7 +36,7 @@ export default function Appointments() {
     <PageContainer>
       <PageHeader
         title="Appointments"
-        subtitle="Calendar, queue, and reminders for all branches."
+        subtitle="Calendar, queue, and reminders for your clinic."
         actions={
           <>
             <Button variant="outline" size="sm" className="gap-1.5" onClick={() => toast({ title: "Reminders sent", description: "WhatsApp & SMS reminders dispatched to today's patients." })}>
@@ -87,7 +87,6 @@ export default function Appointments() {
                 </div>
               ) : dayAppts.map(a => {
                 const p = PATIENTS.find(x => x.id === a.patientId)!;
-                const d = DOCTORS.find(x => x.id === a.doctorId)!;
                 const time = new Date(a.scheduledAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
                 return (
                   <div key={a.id} className="grid grid-cols-[80px_36px_1fr_auto] gap-3 items-center px-4 py-2.5 hover-elevate">
@@ -97,7 +96,7 @@ export default function Appointments() {
                       <Avatar className="h-7 w-7"><AvatarFallback className="bg-muted text-[10px] font-semibold">{p.fullName.split(" ").map(s => s[0]).slice(0,2).join("")}</AvatarFallback></Avatar>
                       <div className="min-w-0">
                         <div className="text-[13px] font-medium truncate">{p.fullName} <span className="text-muted-foreground font-normal">· {p.mrn}</span></div>
-                        <div className="text-[11.5px] text-muted-foreground truncate">{a.reason} · {d.fullName} · <span className="capitalize">{a.channel.replace("_"," ")}</span></div>
+                        <div className="text-[11.5px] text-muted-foreground truncate">{a.reason} · <span className="capitalize">{a.channel.replace("_"," ")}</span></div>
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5">
@@ -125,7 +124,6 @@ export default function Appointments() {
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {queue.map(a => {
                 const p = PATIENTS.find(x => x.id === a.patientId)!;
-                const d = DOCTORS.find(x => x.id === a.doctorId)!;
                 const time = new Date(a.scheduledAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
                 return (
                   <Card key={a.id} className="p-4 border-card-border">
@@ -136,7 +134,7 @@ export default function Appointments() {
                     <div className="mt-2 text-[13px] font-medium truncate">{p.fullName}</div>
                     <div className="text-[11px] text-muted-foreground truncate">{a.reason}</div>
                     <div className="mt-3 pt-3 border-t border-border text-[11.5px] text-muted-foreground flex items-center justify-between">
-                      <span>{d.fullName}</span>
+                      <span>{a.reason}</span>
                       <span className="font-mono">{time}</span>
                     </div>
                   </Card>
@@ -156,7 +154,6 @@ export default function Appointments() {
                     <th className="text-left font-medium px-4 py-2.5">Date</th>
                     <th className="text-left font-medium px-4 py-2.5">Time</th>
                     <th className="text-left font-medium px-4 py-2.5">Patient</th>
-                    <th className="text-left font-medium px-4 py-2.5">Doctor</th>
                     <th className="text-left font-medium px-4 py-2.5">Reason</th>
                     <th className="text-left font-medium px-4 py-2.5">Channel</th>
                     <th className="text-left font-medium px-4 py-2.5">Status</th>
@@ -165,13 +162,11 @@ export default function Appointments() {
                 <tbody>
                   {upcomingWeek.map(a => {
                     const p = PATIENTS.find(x => x.id === a.patientId)!;
-                    const d = DOCTORS.find(x => x.id === a.doctorId)!;
                     return (
                       <tr key={a.id} className="border-t border-border hover:bg-muted/30">
                         <td className="px-4 py-2.5 tabular-nums font-mono text-muted-foreground">{new Date(a.scheduledAt).toLocaleDateString()}</td>
                         <td className="px-4 py-2.5 tabular-nums font-mono">{new Date(a.scheduledAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</td>
                         <td className="px-4 py-2.5 font-medium">{p.fullName}</td>
-                        <td className="px-4 py-2.5 text-muted-foreground">{d.fullName}</td>
                         <td className="px-4 py-2.5 text-muted-foreground">{a.reason}</td>
                         <td className="px-4 py-2.5 text-muted-foreground capitalize">{a.channel.replace("_"," ")}</td>
                         <td className="px-4 py-2.5"><Badge variant="outline" className="capitalize text-[10px]">{a.status.replace("_"," ")}</Badge></td>

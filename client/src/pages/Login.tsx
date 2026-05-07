@@ -8,27 +8,19 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useAuth } from "@/components/AuthProvider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { ShieldCheck, Activity, Stethoscope, BadgeCheck, Sparkles, KeyRound, MailCheck } from "lucide-react";
+import { ShieldCheck, Activity, Stethoscope, BadgeCheck, KeyRound, MailCheck } from "lucide-react";
 import { motion } from "framer-motion";
-
-const QUICK_LOGIN: { role: "admin" | "doctor" | "receptionist" | "pharmacist"; email: string; label: string }[] = [
-  { role: "admin", email: "admin@clinicpulse.app", label: "Clinic Admin" },
-  { role: "doctor", email: "doctor@clinicpulse.app", label: "Doctor" },
-  { role: "receptionist", email: "front@clinicpulse.app", label: "Receptionist" },
-  { role: "pharmacist", email: "pharm@clinicpulse.app", label: "Pharmacist" },
-];
 
 export default function Login() {
   const { login } = useAuth();
   const [, setLocation] = useLocation();
-  const [email, setEmail] = useState("admin@clinicpulse.app");
-  const [password, setPassword] = useState("demo1234");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("signin");
-  const [resetEmail, setResetEmail] = useState("admin@clinicpulse.app");
+  const [resetEmail, setResetEmail] = useState("");
   const [resetCode, setResetCode] = useState("");
-  const [demoCode, setDemoCode] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [resetStep, setResetStep] = useState<"request" | "verify">("request");
@@ -44,25 +36,16 @@ export default function Login() {
     setLocation("/");
   };
 
-  const quick = async (mail: string) => {
-    setEmail(mail);
-    setLoading(true);
-    const r = await login(mail, "demo1234");
-    setLoading(false);
-    if (r.ok) setLocation("/");
-  };
-
   const requestReset = async (e: React.FormEvent) => {
     e.preventDefault();
     setResetLoading(true);
     try {
       const res = await apiRequest("POST", "/api/auth/password/request", { email: resetEmail });
-      const data = await res.json();
-      setDemoCode(data.demoCode ?? "");
+      await res.json();
       setResetStep("verify");
       toast({
         title: "Reset code sent",
-        description: data.demoCode ? `Demo code: ${data.demoCode}` : "Check the account email for reset instructions.",
+        description: "Check the account email for reset instructions.",
       });
     } catch (error) {
       toast({
@@ -89,7 +72,6 @@ export default function Login() {
       setActiveTab("signin");
       setResetStep("request");
       setResetCode("");
-      setDemoCode("");
       setNewPassword("");
       setConfirmPassword("");
       toast({ title: "Password reset complete", description: "You can now sign in with your new password." });
@@ -123,16 +105,16 @@ export default function Login() {
             The operating system for <span className="opacity-80">modern clinics.</span>
           </h1>
           <p className="mt-3 text-white/80 text-[14px] max-w-md">
-            Appointments, prescriptions, EMR, inventory, billing, and analytics — built for multi-branch
-            practices that care about feel as much as they care about throughput.
+            Appointments, prescriptions, EMR, inventory, billing, and analytics — built for a focused
+            clinic that needs speed, clarity, and reliable day-to-day control.
           </p>
 
           <div className="mt-8 grid grid-cols-2 gap-3 max-w-md">
             {[
               { icon: Stethoscope, t: "Smart prescriptions", s: "Templates, allergy alerts, dose calc." },
-              { icon: ShieldCheck, t: "RBAC & 2FA",          s: "Doctor, receptionist, pharmacist isolation." },
+              { icon: ShieldCheck, t: "Secure access",       s: "Password reset, 2FA-ready, role-aware controls." },
               { icon: Activity,    t: "Live analytics",      s: "Revenue, profit, disease trends." },
-              { icon: BadgeCheck,  t: "Multi-branch",        s: "Per-branch inventory & dashboards." },
+              { icon: BadgeCheck,  t: "Single-clinic ready", s: "One queue, one inventory, one dashboard." },
             ].map((f, i) => (
               <motion.div
                 key={i}
@@ -174,7 +156,7 @@ export default function Login() {
               <form className="mt-6 space-y-4" onSubmit={handleLogin}>
                 <div>
                   <Label htmlFor="email" className="text-[12px]">Email</Label>
-                  <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} className="mt-1.5" data-testid="input-email" />
+                  <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} className="mt-1.5" placeholder="you@clinic.com" data-testid="input-email" />
                 </div>
                 <div>
                   <div className="flex items-center justify-between">
@@ -188,7 +170,7 @@ export default function Login() {
                       Forgot?
                     </button>
                   </div>
-                  <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} className="mt-1.5" data-testid="input-password" />
+                  <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} className="mt-1.5" placeholder="Enter your password" data-testid="input-password" />
                 </div>
                 <div>
                   <Label htmlFor="otp" className="text-[12px]">Two-factor code <span className="text-muted-foreground">(optional in demo)</span></Label>
@@ -199,25 +181,6 @@ export default function Login() {
                 </Button>
               </form>
 
-              <div className="mt-6">
-                <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground mb-2">Quick demo sign-in</div>
-                <div className="grid grid-cols-2 gap-2">
-                  {QUICK_LOGIN.map(q => (
-                    <button
-                      key={q.role}
-                      onClick={() => quick(q.email)}
-                      className="text-left rounded-md border border-border p-2.5 hover-elevate"
-                      data-testid={`quick-${q.role}`}
-                    >
-                      <div className="text-[12.5px] font-medium">{q.label}</div>
-                      <div className="text-[11px] text-muted-foreground truncate">{q.email}</div>
-                    </button>
-                  ))}
-                </div>
-                <div className="mt-3 text-[11px] text-muted-foreground flex items-center gap-1.5">
-                  <Sparkles className="h-3 w-3" /> Password for all demo accounts: <code className="font-mono text-[11px]">demo1234</code>
-                </div>
-              </div>
             </TabsContent>
 
             <TabsContent value="signup">
@@ -264,7 +227,7 @@ export default function Login() {
                     />
                   </div>
                   <div className="rounded-lg border border-border bg-muted/40 p-3 text-[12px] text-muted-foreground">
-                    Production mode should email a one-time token and store only a hashed token with expiry. The demo shows the code so you can test the flow locally.
+                    A one-time reset code will be sent to the account email. Reset codes are never displayed on this page.
                   </div>
                   <Button type="submit" className="w-full" disabled={resetLoading} data-testid="button-request-reset">
                     {resetLoading ? "Sending code…" : "Send reset code"}
@@ -276,7 +239,6 @@ export default function Login() {
                     <MailCheck className="h-4 w-4 shrink-0 mt-0.5" />
                     <div>
                       Code sent to <span className="font-medium">{resetEmail}</span>.
-                      {demoCode && <> Demo code: <code className="font-mono font-semibold">{demoCode}</code></>}
                     </div>
                   </div>
                   <div>

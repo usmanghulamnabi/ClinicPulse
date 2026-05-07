@@ -4,10 +4,10 @@ import { Button } from "@/components/ui/button";
 import { FileDown } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, LineChart, Line,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from "recharts";
 import {
-  monthlySeries, last30Days, peakHours, diseaseTrends, topMedicines, doctorPerformance, fmtMoney,
+  monthlySeries, last30Days, peakHours, diseaseTrends, topMedicines, fmtMoney,
 } from "@/lib/demo-data";
 
 const colors = ["hsl(var(--chart-1))","hsl(var(--chart-2))","hsl(var(--chart-3))","hsl(var(--chart-4))","hsl(var(--chart-5))"];
@@ -20,7 +20,7 @@ export default function Analytics() {
     <PageContainer>
       <PageHeader
         title="Analytics"
-        subtitle="Cross-functional dashboards: revenue, profit, prescriptions, doctors, peak hours, and patient growth."
+        subtitle="Single-clinic dashboards: revenue, profit, prescriptions, peak hours, and patient growth."
         actions={<Button variant="outline" size="sm" className="gap-1.5"><FileDown className="h-4 w-4"/> Export PDF</Button>}
       />
 
@@ -132,23 +132,6 @@ export default function Analytics() {
                 <Tooltip contentStyle={{ background: "hsl(var(--popover))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }}/>
                 <Bar dataKey="visits" fill="hsl(var(--chart-1))" radius={[3,3,0,0]}/>
               </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-
-        <Card className="p-5 border-card-border">
-          <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Doctor mix</div>
-          <div className="text-[15px] font-semibold mt-0.5 mb-3">Capacity radar</div>
-          <div className="h-[240px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <RadarChart data={doctorPerformance.map(d => ({ subject: d.doctor.split(" ")[0], rx: d.prescriptions, pat: d.patients }))}>
-                <PolarGrid stroke="hsl(var(--border))"/>
-                <PolarAngleAxis dataKey="subject" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}/>
-                <PolarRadiusAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}/>
-                <Radar name="Prescriptions" dataKey="rx" stroke="hsl(var(--chart-1))" fill="hsl(var(--chart-1))" fillOpacity={0.3}/>
-                <Radar name="Patients" dataKey="pat" stroke="hsl(var(--chart-2))" fill="hsl(var(--chart-2))" fillOpacity={0.3}/>
-                <Legend wrapperStyle={{ fontSize: 11 }}/>
-              </RadarChart>
             </ResponsiveContainer>
           </div>
         </Card>

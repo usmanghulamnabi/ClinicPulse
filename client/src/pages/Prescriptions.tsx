@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Search, Pill, Stethoscope, FileDown, Calendar } from "lucide-react";
-import { PRESCRIPTIONS, PATIENTS, DOCTORS, MEDICINES, fmtMoney, fmtRelative } from "@/lib/demo-data";
+import { PRESCRIPTIONS, PATIENTS, MEDICINES, fmtMoney, fmtRelative } from "@/lib/demo-data";
 
 export default function Prescriptions() {
   const [q, setQ] = useState("");
@@ -20,7 +20,7 @@ export default function Prescriptions() {
     <PageContainer>
       <PageHeader
         title="Prescriptions"
-        subtitle={`${PRESCRIPTIONS.length} total prescriptions across all doctors and branches`}
+        subtitle={`${PRESCRIPTIONS.length} total prescriptions for your clinic`}
         actions={
           <>
             <Button variant="outline" size="sm" className="gap-1.5"><FileDown className="h-4 w-4" /> Export</Button>
@@ -41,7 +41,6 @@ export default function Prescriptions() {
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
         {filtered.slice(0, 30).map(r => {
           const p = PATIENTS.find(x => x.id === r.patientId)!;
-          const d = DOCTORS.find(x => x.id === r.doctorId)!;
           return (
             <Link key={r.id} href={`/prescriptions/${r.id}`}>
               <Card className="p-4 border-card-border hover-elevate cursor-pointer group">
@@ -60,7 +59,7 @@ export default function Prescriptions() {
                   <Pill className="h-3.5 w-3.5" /> {r.items.length} medicines · <Calendar className="h-3 w-3" /> {fmtRelative(r.createdAt)}
                 </div>
                 <div className="mt-3 flex items-center justify-between pt-3 border-t border-border">
-                  <div className="text-[11px] text-muted-foreground">{d.fullName}</div>
+                  <div className="text-[11px] text-muted-foreground">{r.items.length} prescribed items</div>
                   <div className="font-semibold num text-[13px]">{fmtMoney(r.total)}</div>
                 </div>
               </Card>
