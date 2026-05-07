@@ -1,12 +1,9 @@
 /**
  * ClinicPulse — Vercel Serverless API Handler (Postgres-backed)
  *
- * Persistence model:
- *   - All CRUD data (patients, prescriptions, medicines, doctors) stored in Postgres.
- *   - On first request (cold start), initDb() runs CREATE TABLE IF NOT EXISTS
- *     and seeds defaults if tables are empty.
- *   - Auth accounts remain in-memory (DEMO_ACCOUNTS) — no DB required for auth.
- *   - Env var: POSTGRES_URL — set in Vercel project dashboard.
+ * All CRUD routes hit Postgres via POSTGRES_URL.
+ * initDb() runs on each cold start: CREATE TABLE IF NOT EXISTS + seed if empty.
+ * Auth stays in-memory (DEMO_ACCOUNTS).
  *
  * Routes:
  *   POST /api/auth/login
@@ -25,6 +22,7 @@
  *
  *   GET    /api/prescriptions
  *   POST   /api/prescriptions
+ *   GET    /api/prescriptions/:id
  *   PATCH  /api/prescriptions/:id
  *
  *   GET    /api/medicines
@@ -34,6 +32,10 @@
  *   GET    /api/doctors
  *   POST   /api/doctors
  *   PATCH  /api/doctors/:id
+ *   DELETE /api/doctors/:id
+ *
+ *   GET    /api/settings
+ *   PATCH  /api/settings
  */
 
 import postgres from "postgres";
@@ -44,7 +46,9 @@ let sql;
 function getDb() {
   if (!sql) {
     if (!process.env.POSTGRES_URL) {
-      throw new Error("POSTGRES_URL environment variable is not set. Please configure it in your Vercel project settings.");
+      throw new Error(
+        "POSTGRES_URL environment variable is not set. Configure it in your Vercel project settings."
+      );
     }
     sql = postgres(process.env.POSTGRES_URL, {
       ssl: "require",
@@ -64,7 +68,7 @@ async function initDb() {
   if (dbInitialized) return;
   const db = getDb();
 
-  // Create tables
+  // Doctors
   await db`
     CREATE TABLE IF NOT EXISTS doctors (
       id           SERIAL PRIMARY KEY,
@@ -79,6 +83,7 @@ async function initDb() {
     )
   `;
 
+  // Medicines
   await db`
     CREATE TABLE IF NOT EXISTS medicines (
       id             SERIAL PRIMARY KEY,
@@ -98,6 +103,7 @@ async function initDb() {
     )
   `;
 
+  // Patients  (doctor_id SET NULL on doctor delete — pages show "Unassigned")
   await db`
     CREATE TABLE IF NOT EXISTS patients (
       id            SERIAL PRIMARY KEY,
@@ -123,6 +129,8 @@ async function initDb() {
     )
   `;
 
+  // Prescriptions  (patient_id CASCADE — delete patient → delete prescriptions)
+  //               (doctor_id SET NULL — delete doctor → preserve prescription, show "Unassigned")
   await db`
     CREATE TABLE IF NOT EXISTS prescriptions (
       id          SERIAL PRIMARY KEY,
@@ -136,11 +144,32 @@ async function initDb() {
     )
   `;
 
-  // Seed if empty
+  // Settings (single-row key/value store — id always 1)
+  await db`
+    CREATE TABLE IF NOT EXISTS settings (
+      id               INTEGER PRIMARY KEY DEFAULT 1,
+      clinic_name      TEXT NOT NULL DEFAULT 'ClinicPulse Health',
+      clinic_slug      TEXT NOT NULL DEFAULT 'clinicpulse-health',
+      currency         TEXT NOT NULL DEFAULT 'PKR (₨)',
+      timezone         TEXT NOT NULL DEFAULT 'Asia/Karachi',
+      notif_email      BOOLEAN NOT NULL DEFAULT true,
+      notif_sms        BOOLEAN NOT NULL DEFAULT false,
+      notif_wa         BOOLEAN NOT NULL DEFAULT true,
+      notif_push       BOOLEAN NOT NULL DEFAULT true,
+      updated_at       BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT * 1000
+    )
+  `;
+
+  // Seed if doctors table is empty
   const [{ count: doctorCount }] = await db`SELECT COUNT(*)::int AS count FROM doctors`;
   if (doctorCount === 0) {
     await seedDefaults(db);
   }
+
+  // Ensure settings row exists
+  await db`
+    INSERT INTO settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING
+  `;
 
   dbInitialized = true;
 }
@@ -160,11 +189,9 @@ async function seedDefaults(db) {
       (4, 'doctor3@clinicpulse.app', 'Dr. Faisal Mahmood', 'Pulmonology',       1, 'FM', true, '+92 300 1234504')
     ON CONFLICT (id) DO NOTHING
   `;
-
-  // Reset doctor sequence
   await db`SELECT setval('doctors_id_seq', 4, true)`;
 
-  // Medicines (25 records)
+  // Medicines (25)
   await db`
     INSERT INTO medicines (id, name, generic, company, unit, purchase_price, selling_price, stock, low_stock_at, batch_no, expiry, barcode, sold_30d) VALUES
       (1,  'Augmentin 625mg',    'Amoxicillin/Clavulanate', 'GSK',         'tab',    18,  28,  32,  25, 'B2401', ${now + 185*day}, '849000000001', 140),
@@ -194,57 +221,54 @@ async function seedDefaults(db) {
       (25, 'Amlodipine 5mg',    'Amlodipine',              'Pfizer',      'tab',    4,   8,   300, 25, 'B2425', ${now + 320*day}, '849000000025', 260)
     ON CONFLICT (id) DO NOTHING
   `;
-
   await db`SELECT setval('medicines_id_seq', 25, true)`;
 
   // Patients
-  const p1visits = JSON.stringify([
+  const p1v = JSON.stringify([
     { id: 1, date: now - 3*day, doctorId: 2, diagnosis: "Hypertension follow-up", soap: { s: "Patient reports occasional headache and fatigue for 4 days.", o: "BP 148/92 mmHg · HR 78 bpm · Temp 36.8°C · SpO₂ 98%", a: "Essential Hypertension — partially controlled", p: "Continued Telmisartan 40mg OD, Amlodipine 5mg OD. Follow-up in 14 days." } },
     { id: 2, date: now - 33*day, doctorId: 2, diagnosis: "Type 2 DM follow-up", soap: { s: "Patient reports polyuria and increased thirst for 1 week.", o: "BP 142/88 mmHg · HR 76 bpm · FBS 178 mg/dL · HbA1c 7.2%", a: "Type 2 Diabetes — suboptimal control", p: "Increased Metformin 500mg to BID. Glucophage XR 1g OD added. Diet counselling given." } },
   ]);
-  const p2visits = JSON.stringify([
+  const p2v = JSON.stringify([
     { id: 1, date: now - 7*day, doctorId: 3, diagnosis: "Asthma exacerbation", soap: { s: "Patient reports wheezing and shortness of breath for 2 days, worse at night.", o: "BP 118/76 mmHg · HR 92 bpm · SpO₂ 94% · Peak flow 68% predicted", a: "Mild persistent asthma — acute exacerbation", p: "Salbutamol inhaler PRN. Montelukast 10mg OD added. Prednisolone 5-day course. Follow-up in 10 days." } },
   ]);
-  const p3visits = JSON.stringify([
+  const p3v = JSON.stringify([
     { id: 1, date: now - 12*day, doctorId: 2, diagnosis: "Cardiology follow-up", soap: { s: "Patient reports mild chest tightness on exertion and dyspnoea on climbing stairs.", o: "BP 152/96 mmHg · HR 68 bpm · SpO₂ 97% · ECG: sinus rhythm", a: "Hypertension with hyperlipidemia — requires optimisation", p: "Atenolol 50mg OD continued. Atorvastatin 20mg added. Aspirin 75mg OD. Repeat lipid profile in 6 weeks." } },
     { id: 2, date: now - 60*day, doctorId: 2, diagnosis: "Hypertension follow-up", soap: { s: "BP running high at home per patient log.", o: "BP 160/100 mmHg · HR 72 bpm", a: "Uncontrolled hypertension", p: "Amlodipine 5mg added. Lifestyle modifications advised." } },
   ]);
-  const p4visits = JSON.stringify([
+  const p4v = JSON.stringify([
     { id: 1, date: now - 1*day, doctorId: 1, diagnosis: "Acute viral URI", soap: { s: "Patient reports sore throat, runny nose, and mild fever for 3 days.", o: "BP 112/72 mmHg · HR 84 bpm · Temp 37.6°C · SpO₂ 99% · Throat: mild erythema", a: "Acute viral upper respiratory tract infection", p: "Panadol Extra 500mg TDS × 5 days. Loratadine 10mg OD × 5 days. Rest and hydration. Return if no improvement in 5 days." } },
   ]);
 
   await db`
     INSERT INTO patients (id, mrn, full_name, age, gender, phone, email, address, blood_group, allergies, chronic, vaccinations, branch_id, doctor_id, diagnosis, last_visit_at, created_at, notes, family, visits) VALUES
-      (1, 'CP-2001', 'Ali Hassan',   45, 'M', '+92 300 1234567', 'ali.hassan@mail.com',   '14-B, Gulberg III, Lahore',    'O+',  ${JSON.stringify(["Penicillin"])},   ${JSON.stringify(["Hypertension","Type 2 Diabetes"])}, ${JSON.stringify(["Hep B","Influenza '24","COVID-19 booster"])}, 1, 2, 'Hypertension follow-up', ${now - 3*day},   ${now - 420*day}, 'Patient prefers morning appointments. Compliant with therapy.', ${JSON.stringify({mother:"Hypertension",father:"Type 2 Diabetes"})}, ${p1visits}),
-      (2, 'CP-2002', 'Maryam Iqbal', 32, 'F', '+92 321 9876543', 'maryam.iqbal@mail.com', '7-C, DHA Phase 4, Karachi',    'A+',  ${JSON.stringify([])},               ${JSON.stringify(["Asthma"])},                         ${JSON.stringify(["Hep B","Tdap","COVID-19 booster"])},          1, 3, 'Asthma exacerbation',    ${now - 7*day},   ${now - 200*day}, '', ${JSON.stringify({mother:"Asthma"})}, ${p2visits}),
-      (3, 'CP-2003', 'Hamza Khan',   58, 'M', '+92 333 5556677', 'hamza.khan@mail.com',   '22-A, F-7 Markaz, Islamabad',  'B+',  ${JSON.stringify(["NSAIDs"])},        ${JSON.stringify(["Hypertension","Hyperlipidemia"])},   ${JSON.stringify(["Hep B","Influenza '24"])},                    1, 2, 'Cardiology follow-up',   ${now - 12*day},  ${now - 600*day}, 'Patient is a retired civil servant. Good compliance.', ${JSON.stringify({father:"Hypertension",mother:"Hyperlipidemia"})}, ${p3visits}),
-      (4, 'CP-2004', 'Sara Ahmed',   27, 'F', '+92 312 3334455', 'sara.ahmed@mail.com',   '5-D, Bahria Town, Rawalpindi', 'AB-', ${JSON.stringify(["Sulfa"])},         ${JSON.stringify([])},                                 ${JSON.stringify(["Hep B","Tdap","COVID-19 booster","Influenza '24"])}, 1, 1, 'Acute viral URI',     ${now - 1*day},   ${now - 30*day},  '', ${JSON.stringify({})}, ${p4visits})
+      (1,'CP-2001','Ali Hassan',  45,'M','+92 300 1234567','ali.hassan@mail.com',  '14-B, Gulberg III, Lahore',   'O+', ${JSON.stringify(["Penicillin"])}, ${JSON.stringify(["Hypertension","Type 2 Diabetes"])}, ${JSON.stringify(["Hep B","Influenza '24","COVID-19 booster"])},1,2,'Hypertension follow-up',${now-3*day}, ${now-420*day},'Patient prefers morning appointments. Compliant with therapy.',${JSON.stringify({mother:"Hypertension",father:"Type 2 Diabetes"})},${p1v}),
+      (2,'CP-2002','Maryam Iqbal',32,'F','+92 321 9876543','maryam.iqbal@mail.com','7-C, DHA Phase 4, Karachi',   'A+', ${JSON.stringify([])},             ${JSON.stringify(["Asthma"])},                         ${JSON.stringify(["Hep B","Tdap","COVID-19 booster"])},          1,3,'Asthma exacerbation',   ${now-7*day}, ${now-200*day},'',${JSON.stringify({mother:"Asthma"})},${p2v}),
+      (3,'CP-2003','Hamza Khan',  58,'M','+92 333 5556677','hamza.khan@mail.com',  '22-A, F-7 Markaz, Islamabad', 'B+', ${JSON.stringify(["NSAIDs"])},       ${JSON.stringify(["Hypertension","Hyperlipidemia"])},   ${JSON.stringify(["Hep B","Influenza '24"])},                    1,2,'Cardiology follow-up',  ${now-12*day},${now-600*day},'Patient is a retired civil servant. Good compliance.',${JSON.stringify({father:"Hypertension",mother:"Hyperlipidemia"})},${p3v}),
+      (4,'CP-2004','Sara Ahmed',  27,'F','+92 312 3334455','sara.ahmed@mail.com',  '5-D, Bahria Town, Rawalpindi','AB-',${JSON.stringify(["Sulfa"])},        ${JSON.stringify([])},                                 ${JSON.stringify(["Hep B","Tdap","COVID-19 booster","Influenza '24"])},1,1,'Acute viral URI',   ${now-1*day}, ${now-30*day}, '',${JSON.stringify({})},${p4v})
     ON CONFLICT (id) DO NOTHING
   `;
-
   await db`SELECT setval('patients_id_seq', 4, true)`;
 
   // Prescriptions
-  const rx1items = JSON.stringify([{ medicineId: 6, dose: "40mg", frequency: "1-0-0", duration: 30, qty: 30 }, { medicineId: 25, dose: "5mg", frequency: "1-0-0", duration: 30, qty: 30 }, { medicineId: 3, dose: "500mg", frequency: "1-0-1", duration: 30, qty: 60 }]);
-  const rx2items = JSON.stringify([{ medicineId: 3, dose: "500mg", frequency: "1-0-1", duration: 30, qty: 60 }, { medicineId: 4, dose: "1g", frequency: "0-0-1", duration: 30, qty: 30 }]);
-  const rx3items = JSON.stringify([{ medicineId: 9, dose: "100mcg", frequency: "PRN", duration: 30, qty: 1 }, { medicineId: 10, dose: "10mg", frequency: "0-0-1", duration: 30, qty: 30 }]);
-  const rx4items = JSON.stringify([{ medicineId: 5, dose: "50mg", frequency: "1-0-0", duration: 30, qty: 30 }, { medicineId: 7, dose: "20mg", frequency: "0-0-1", duration: 30, qty: 30 }, { medicineId: 21, dose: "75mg", frequency: "1-0-0", duration: 30, qty: 30 }]);
-  const rx5items = JSON.stringify([{ medicineId: 2, dose: "500mg", frequency: "1-1-1", duration: 5, qty: 15 }, { medicineId: 14, dose: "10mg", frequency: "0-0-1", duration: 5, qty: 5 }]);
+  const rx1i = JSON.stringify([{medicineId:6,dose:"40mg",frequency:"1-0-0",duration:30,qty:30},{medicineId:25,dose:"5mg",frequency:"1-0-0",duration:30,qty:30},{medicineId:3,dose:"500mg",frequency:"1-0-1",duration:30,qty:60}]);
+  const rx2i = JSON.stringify([{medicineId:3,dose:"500mg",frequency:"1-0-1",duration:30,qty:60},{medicineId:4,dose:"1g",frequency:"0-0-1",duration:30,qty:30}]);
+  const rx3i = JSON.stringify([{medicineId:9,dose:"100mcg",frequency:"PRN",duration:30,qty:1},{medicineId:10,dose:"10mg",frequency:"0-0-1",duration:30,qty:30}]);
+  const rx4i = JSON.stringify([{medicineId:5,dose:"50mg",frequency:"1-0-0",duration:30,qty:30},{medicineId:7,dose:"20mg",frequency:"0-0-1",duration:30,qty:30},{medicineId:21,dose:"75mg",frequency:"1-0-0",duration:30,qty:30}]);
+  const rx5i = JSON.stringify([{medicineId:2,dose:"500mg",frequency:"1-1-1",duration:5,qty:15},{medicineId:14,dose:"10mg",frequency:"0-0-1",duration:5,qty:5}]);
 
   await db`
     INSERT INTO prescriptions (id, patient_id, doctor_id, created_at, diagnosis, status, items, total) VALUES
-      (1, 1, 2, ${now - 3*day},  'Hypertension follow-up', 'active',    ${rx1items}, 840),
-      (2, 1, 2, ${now - 33*day}, 'Type 2 DM follow-up',    'completed', ${rx2items}, 810),
-      (3, 2, 3, ${now - 7*day},  'Asthma exacerbation',    'active',    ${rx3items}, 1020),
-      (4, 3, 2, ${now - 12*day}, 'Cardiology follow-up',   'active',    ${rx4items}, 930),
-      (5, 4, 1, ${now - 1*day},  'Acute viral URI',         'active',    ${rx5items}, 150)
+      (1,1,2,${now-3*day}, 'Hypertension follow-up','active',   ${rx1i},840),
+      (2,1,2,${now-33*day},'Type 2 DM follow-up',   'completed',${rx2i},810),
+      (3,2,3,${now-7*day}, 'Asthma exacerbation',   'active',   ${rx3i},1020),
+      (4,3,2,${now-12*day},'Cardiology follow-up',  'active',   ${rx4i},930),
+      (5,4,1,${now-1*day}, 'Acute viral URI',        'active',   ${rx5i},150)
     ON CONFLICT (id) DO NOTHING
   `;
-
   await db`SELECT setval('prescriptions_id_seq', 5, true)`;
 }
 
-/* ── Row → camelCase mappers ─────────────────────────────────────────────── */
+/* ── Row mappers ─────────────────────────────────────────────────────────── */
 
 function mapDoctor(r) {
   return {
@@ -315,7 +339,21 @@ function mapPrescription(r) {
   };
 }
 
-/* ── Auth accounts (in-memory, no DB) ────────────────────────────────────── */
+function mapSettings(r) {
+  return {
+    clinicName:  r.clinic_name,
+    clinicSlug:  r.clinic_slug,
+    currency:    r.currency,
+    timezone:    r.timezone,
+    notifEmail:  r.notif_email,
+    notifSms:    r.notif_sms,
+    notifWa:     r.notif_wa,
+    notifPush:   r.notif_push,
+    updatedAt:   Number(r.updated_at),
+  };
+}
+
+/* ── Auth accounts (in-memory) ────────────────────────────────────────────── */
 
 const DEMO_ACCOUNTS = [
   { email: "admin@clinicpulse.app",   password: "demo1234", role: "admin",        fullName: "Dr. Sara Khan",      avatarUrl: "" },
@@ -347,6 +385,8 @@ function send(res, status, data) {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json");
   res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
   res.end(JSON.stringify(data));
 }
 
@@ -360,9 +400,13 @@ function makeResetCode(email) {
 }
 
 function parsePath(path) {
-  const m = path.match(/\/api\/([^/?]+)(?:\/([^/?]+))?/);
-  if (!m) return { route: null, id: null };
-  return { route: m[1], id: m[2] ?? null };
+  // /api/patients         → { route:"patients", id:null, sub:null }
+  // /api/patients/3       → { route:"patients", id:"3",  sub:null }
+  // /api/auth/login       → { route:"auth",     id:"login", sub:null }
+  // /api/auth/password/reset → { route:"auth", id:"password", sub:"reset" }
+  const m = path.match(/\/api\/([^/?]+)(?:\/([^/?]+))?(?:\/([^/?]+))?/);
+  if (!m) return { route: null, id: null, sub: null };
+  return { route: m[1] ?? null, id: m[2] ?? null, sub: m[3] ?? null };
 }
 
 /* ── Main handler ────────────────────────────────────────────────────────── */
@@ -383,7 +427,8 @@ export default async function handler(req, res) {
     return res.end();
   }
 
-  // Auth routes don't need DB
+  /* ── Auth routes (no DB needed) ── */
+
   if (method === "POST" && path.endsWith("/api/auth/login")) {
     const email = normalizeEmail(body.email);
     const password = String(body.password || "");
@@ -434,7 +479,7 @@ export default async function handler(req, res) {
     return send(res, 200, { user: DEMO_ACCOUNTS[0] });
   }
 
-  // All other routes require DB
+  /* ── DB init ── */
   try {
     await initDb();
   } catch (err) {
@@ -443,9 +488,10 @@ export default async function handler(req, res) {
   }
 
   const db = getDb();
+  const { route, id, sub } = parsePath(path);
 
   /* ── Health ── */
-  if (method === "GET" && path.endsWith("/api/health")) {
+  if (method === "GET" && route === "health") {
     try {
       const [{ count }] = await db`SELECT COUNT(*)::int AS count FROM patients`;
       return send(res, 200, { ok: true, app: "ClinicPulse", runtime: "vercel", patients: count, db: "postgres" });
@@ -454,8 +500,6 @@ export default async function handler(req, res) {
     }
   }
 
-  const { route, id } = parsePath(path);
-
   /* ── Patients ── */
   if (route === "patients") {
     try {
@@ -463,95 +507,59 @@ export default async function handler(req, res) {
         const rows = await db`SELECT * FROM patients ORDER BY id`;
         return send(res, 200, { patients: rows.map(mapPatient) });
       }
-
       if (method === "GET" && id) {
         const [p] = await db`SELECT * FROM patients WHERE id = ${parseInt(id)}`;
         if (!p) return send(res, 404, { error: "Patient not found" });
         return send(res, 200, { patient: mapPatient(p) });
       }
-
       if (method === "POST") {
         const fullName = String(body.fullName || "Unknown").trim();
         const [p] = await db`
-          INSERT INTO patients (
-            full_name, age, gender, phone, email, address, blood_group,
-            allergies, chronic, vaccinations, branch_id, doctor_id,
-            diagnosis, last_visit_at, created_at, notes, family, visits
-          ) VALUES (
-            ${fullName},
-            ${body.age || 30},
-            ${body.gender || "M"},
-            ${body.phone || ""},
-            ${body.email || ""},
-            ${body.address || ""},
-            ${body.bloodGroup || "O+"},
-            ${JSON.stringify(body.allergies || [])},
-            ${JSON.stringify(body.chronic || [])},
-            ${JSON.stringify(body.vaccinations || [])},
-            ${body.branchId || 1},
-            ${body.doctorId || null},
-            ${body.diagnosis || "New registration"},
-            ${Date.now()},
-            ${Date.now()},
-            ${body.notes || ""},
-            ${JSON.stringify(body.family || {})},
-            ${JSON.stringify([])}
-          )
+          INSERT INTO patients (full_name,age,gender,phone,email,address,blood_group,allergies,chronic,vaccinations,branch_id,doctor_id,diagnosis,last_visit_at,created_at,notes,family,visits)
+          VALUES (${fullName},${body.age||30},${body.gender||"M"},${body.phone||""},${body.email||""},${body.address||""},${body.bloodGroup||"O+"},
+            ${JSON.stringify(body.allergies||[])},${JSON.stringify(body.chronic||[])},${JSON.stringify(body.vaccinations||[])},
+            ${body.branchId||1},${body.doctorId||null},${body.diagnosis||"New registration"},
+            ${Date.now()},${Date.now()},${body.notes||""},${JSON.stringify(body.family||{})},${JSON.stringify([])})
           RETURNING *
         `;
-        // Update MRN to match id
-        const [updated] = await db`
-          UPDATE patients SET mrn = ${'CP-' + (2000 + p.id)} WHERE id = ${p.id} RETURNING *
-        `;
+        const [updated] = await db`UPDATE patients SET mrn=${'CP-'+(2000+p.id)} WHERE id=${p.id} RETURNING *`;
         return send(res, 201, { patient: mapPatient(updated) });
       }
-
       if (method === "PATCH" && id) {
         const pid = parseInt(id);
-        const [existing] = await db`SELECT * FROM patients WHERE id = ${pid}`;
+        const [existing] = await db`SELECT * FROM patients WHERE id=${pid}`;
         if (!existing) return send(res, 404, { error: "Patient not found" });
-
-        const fields = {};
-        if (body.fullName !== undefined)   fields.full_name    = body.fullName;
-        if (body.age !== undefined)        fields.age          = body.age;
-        if (body.gender !== undefined)     fields.gender       = body.gender;
-        if (body.phone !== undefined)      fields.phone        = body.phone;
-        if (body.email !== undefined)      fields.email        = body.email;
-        if (body.address !== undefined)    fields.address      = body.address;
-        if (body.bloodGroup !== undefined) fields.blood_group  = body.bloodGroup;
-        if (body.allergies !== undefined)  fields.allergies    = JSON.stringify(body.allergies);
-        if (body.chronic !== undefined)    fields.chronic      = JSON.stringify(body.chronic);
-        if (body.vaccinations !== undefined) fields.vaccinations = JSON.stringify(body.vaccinations);
-        if (body.doctorId !== undefined)   fields.doctor_id    = body.doctorId;
-        if (body.diagnosis !== undefined)  fields.diagnosis    = body.diagnosis;
-        if (body.lastVisitAt !== undefined) fields.last_visit_at = body.lastVisitAt;
-        if (body.notes !== undefined)      fields.notes        = body.notes;
-        if (body.family !== undefined)     fields.family       = JSON.stringify(body.family);
-        if (body.visits !== undefined)     fields.visits       = JSON.stringify(body.visits);
-
-        if (Object.keys(fields).length === 0) {
-          return send(res, 200, { patient: mapPatient(existing) });
-        }
-
-        const [updated] = await db`
-          UPDATE patients SET ${db(fields)} WHERE id = ${pid} RETURNING *
-        `;
+        const f = {};
+        if (body.fullName    !== undefined) f.full_name    = body.fullName;
+        if (body.age         !== undefined) f.age          = body.age;
+        if (body.gender      !== undefined) f.gender       = body.gender;
+        if (body.phone       !== undefined) f.phone        = body.phone;
+        if (body.email       !== undefined) f.email        = body.email;
+        if (body.address     !== undefined) f.address      = body.address;
+        if (body.bloodGroup  !== undefined) f.blood_group  = body.bloodGroup;
+        if (body.allergies   !== undefined) f.allergies    = JSON.stringify(body.allergies);
+        if (body.chronic     !== undefined) f.chronic      = JSON.stringify(body.chronic);
+        if (body.vaccinations!== undefined) f.vaccinations = JSON.stringify(body.vaccinations);
+        if (body.doctorId    !== undefined) f.doctor_id    = body.doctorId;
+        if (body.diagnosis   !== undefined) f.diagnosis    = body.diagnosis;
+        if (body.lastVisitAt !== undefined) f.last_visit_at= body.lastVisitAt;
+        if (body.notes       !== undefined) f.notes        = body.notes;
+        if (body.family      !== undefined) f.family       = JSON.stringify(body.family);
+        if (body.visits      !== undefined) f.visits       = JSON.stringify(body.visits);
+        if (Object.keys(f).length === 0) return send(res, 200, { patient: mapPatient(existing) });
+        const [updated] = await db`UPDATE patients SET ${db(f)} WHERE id=${pid} RETURNING *`;
         return send(res, 200, { patient: mapPatient(updated) });
       }
-
       // Single delete
       if (method === "DELETE" && id) {
         const pid = parseInt(id);
-        // prescriptions cascade via FK ON DELETE CASCADE
-        await db`DELETE FROM patients WHERE id = ${pid}`;
+        await db`DELETE FROM patients WHERE id=${pid}`;
         return send(res, 200, { ok: true, deleted: pid });
       }
-
-      // Bulk delete
+      // Bulk delete: DELETE /api/patients body:{ids:[...]}
       if (method === "DELETE" && !id) {
         const ids = Array.isArray(body.ids) ? body.ids.map(Number).filter(Boolean) : [];
         if (ids.length === 0) return send(res, 200, { ok: true, deleted: [] });
-        // prescriptions cascade via FK ON DELETE CASCADE
         await db`DELETE FROM patients WHERE id = ANY(${ids}::int[])`;
         return send(res, 200, { ok: true, deleted: ids });
       }
@@ -568,48 +576,30 @@ export default async function handler(req, res) {
         const rows = await db`SELECT * FROM prescriptions ORDER BY id`;
         return send(res, 200, { prescriptions: rows.map(mapPrescription) });
       }
-
       if (method === "GET" && id) {
-        const [rx] = await db`SELECT * FROM prescriptions WHERE id = ${parseInt(id)}`;
+        const [rx] = await db`SELECT * FROM prescriptions WHERE id=${parseInt(id)}`;
         if (!rx) return send(res, 404, { error: "Prescription not found" });
         return send(res, 200, { prescription: mapPrescription(rx) });
       }
-
       if (method === "POST") {
         const [rx] = await db`
-          INSERT INTO prescriptions (patient_id, doctor_id, created_at, diagnosis, status, items, total)
-          VALUES (
-            ${body.patientId || null},
-            ${body.doctorId || null},
-            ${Date.now()},
-            ${body.diagnosis || ""},
-            ${body.status || "active"},
-            ${JSON.stringify(body.items || [])},
-            ${body.total || 0}
-          )
+          INSERT INTO prescriptions (patient_id,doctor_id,created_at,diagnosis,status,items,total)
+          VALUES (${body.patientId||null},${body.doctorId||null},${Date.now()},${body.diagnosis||""},${body.status||"active"},${JSON.stringify(body.items||[])},${body.total||0})
           RETURNING *
         `;
         return send(res, 201, { prescription: mapPrescription(rx) });
       }
-
       if (method === "PATCH" && id) {
-        const [existing] = await db`SELECT * FROM prescriptions WHERE id = ${parseInt(id)}`;
+        const [existing] = await db`SELECT * FROM prescriptions WHERE id=${parseInt(id)}`;
         if (!existing) return send(res, 404, { error: "Prescription not found" });
-
-        const fields = {};
-        if (body.diagnosis !== undefined) fields.diagnosis  = body.diagnosis;
-        if (body.status !== undefined)    fields.status     = body.status;
-        if (body.items !== undefined)     fields.items      = JSON.stringify(body.items);
-        if (body.total !== undefined)     fields.total      = body.total;
-        if (body.doctorId !== undefined)  fields.doctor_id  = body.doctorId;
-
-        if (Object.keys(fields).length === 0) {
-          return send(res, 200, { prescription: mapPrescription(existing) });
-        }
-
-        const [updated] = await db`
-          UPDATE prescriptions SET ${db(fields)} WHERE id = ${parseInt(id)} RETURNING *
-        `;
+        const f = {};
+        if (body.diagnosis !== undefined) f.diagnosis = body.diagnosis;
+        if (body.status    !== undefined) f.status    = body.status;
+        if (body.items     !== undefined) f.items     = JSON.stringify(body.items);
+        if (body.total     !== undefined) f.total     = body.total;
+        if (body.doctorId  !== undefined) f.doctor_id = body.doctorId;
+        if (Object.keys(f).length === 0) return send(res, 200, { prescription: mapPrescription(existing) });
+        const [updated] = await db`UPDATE prescriptions SET ${db(f)} WHERE id=${parseInt(id)} RETURNING *`;
         return send(res, 200, { prescription: mapPrescription(updated) });
       }
     } catch (err) {
@@ -625,33 +615,16 @@ export default async function handler(req, res) {
         const rows = await db`SELECT * FROM medicines ORDER BY id`;
         return send(res, 200, { medicines: rows.map(mapMedicine) });
       }
-
       if (method === "POST") {
         const [m] = await db`
-          INSERT INTO medicines (
-            name, generic, company, unit, purchase_price, selling_price,
-            stock, low_stock_at, batch_no, expiry, barcode, sold_30d
-          ) VALUES (
-            ${body.name || ""},
-            ${body.generic || ""},
-            ${body.company || ""},
-            ${body.unit || "tab"},
-            ${body.purchasePrice || 0},
-            ${body.sellingPrice || 0},
-            ${body.stock || 0},
-            ${body.lowStockAt || 25},
-            ${body.batchNo || ""},
-            ${body.expiry || 0},
-            ${body.barcode || ""},
-            ${body.sold30d || 0}
-          )
+          INSERT INTO medicines (name,generic,company,unit,purchase_price,selling_price,stock,low_stock_at,batch_no,expiry,barcode,sold_30d)
+          VALUES (${body.name||""},${body.generic||""},${body.company||""},${body.unit||"tab"},${body.purchasePrice||0},${body.sellingPrice||0},${body.stock||0},${body.lowStockAt||25},${body.batchNo||""},${body.expiry||0},${body.barcode||""},${body.sold30d||0})
           RETURNING *
         `;
         return send(res, 201, { medicine: mapMedicine(m) });
       }
-
       if (method === "DELETE" && id) {
-        await db`DELETE FROM medicines WHERE id = ${parseInt(id)}`;
+        await db`DELETE FROM medicines WHERE id=${parseInt(id)}`;
         return send(res, 200, { ok: true });
       }
     } catch (err) {
@@ -667,48 +640,38 @@ export default async function handler(req, res) {
         const rows = await db`SELECT * FROM doctors ORDER BY id`;
         return send(res, 200, { doctors: rows.map(mapDoctor) });
       }
-
       if (method === "POST") {
         const fullName = String(body.fullName || "").trim();
         const initials = body.initials ||
           fullName.split(" ").filter(Boolean).map(w => w[0]).slice(0, 2).join("").toUpperCase();
-
         const [d] = await db`
-          INSERT INTO doctors (email, full_name, specialty, branch_id, initials, active, phone)
-          VALUES (
-            ${body.email || ""},
-            ${fullName},
-            ${body.specialty || "General Practice"},
-            ${body.branchId || 1},
-            ${initials},
-            ${body.active !== false},
-            ${body.phone || ""}
-          )
+          INSERT INTO doctors (email,full_name,specialty,branch_id,initials,active,phone)
+          VALUES (${body.email||""},${fullName},${body.specialty||"General Practice"},${body.branchId||1},${initials},${body.active!==false},${body.phone||""})
           RETURNING *
         `;
         return send(res, 201, { doctor: mapDoctor(d) });
       }
-
       if (method === "PATCH" && id) {
-        const [existing] = await db`SELECT * FROM doctors WHERE id = ${parseInt(id)}`;
+        const [existing] = await db`SELECT * FROM doctors WHERE id=${parseInt(id)}`;
         if (!existing) return send(res, 404, { error: "Doctor not found" });
-
-        const fields = {};
-        if (body.email !== undefined)     fields.email     = body.email;
-        if (body.fullName !== undefined)  fields.full_name = body.fullName;
-        if (body.specialty !== undefined) fields.specialty = body.specialty;
-        if (body.initials !== undefined)  fields.initials  = body.initials;
-        if (body.active !== undefined)    fields.active    = body.active;
-        if (body.phone !== undefined)     fields.phone     = body.phone;
-
-        if (Object.keys(fields).length === 0) {
-          return send(res, 200, { doctor: mapDoctor(existing) });
-        }
-
-        const [updated] = await db`
-          UPDATE doctors SET ${db(fields)} WHERE id = ${parseInt(id)} RETURNING *
-        `;
+        const f = {};
+        if (body.email     !== undefined) f.email     = body.email;
+        if (body.fullName  !== undefined) f.full_name = body.fullName;
+        if (body.specialty !== undefined) f.specialty = body.specialty;
+        if (body.initials  !== undefined) f.initials  = body.initials;
+        if (body.active    !== undefined) f.active    = body.active;
+        if (body.phone     !== undefined) f.phone     = body.phone;
+        if (Object.keys(f).length === 0) return send(res, 200, { doctor: mapDoctor(existing) });
+        const [updated] = await db`UPDATE doctors SET ${db(f)} WHERE id=${parseInt(id)} RETURNING *`;
         return send(res, 200, { doctor: mapDoctor(updated) });
+      }
+      // DELETE /api/doctors/:id  (admin-only — frontend enforces role)
+      if (method === "DELETE" && id) {
+        const did = parseInt(id);
+        // patients.doctor_id → SET NULL (FK), prescriptions.doctor_id → SET NULL (FK)
+        // Both handled by DB constraints — just delete the doctor row
+        await db`DELETE FROM doctors WHERE id=${did}`;
+        return send(res, 200, { ok: true, deleted: did });
       }
     } catch (err) {
       console.error("doctors error:", err);
@@ -716,5 +679,36 @@ export default async function handler(req, res) {
     }
   }
 
-  return send(res, 404, { error: "API route not found" });
+  /* ── Settings ── */
+  if (route === "settings") {
+    try {
+      if (method === "GET") {
+        const [row] = await db`SELECT * FROM settings WHERE id=1`;
+        if (!row) return send(res, 200, { settings: mapSettings({ clinic_name:"ClinicPulse Health", clinic_slug:"clinicpulse-health", currency:"PKR (₨)", timezone:"Asia/Karachi", notif_email:true, notif_sms:false, notif_wa:true, notif_push:true, updated_at:Date.now() }) });
+        return send(res, 200, { settings: mapSettings(row) });
+      }
+      if (method === "PATCH") {
+        const f = {};
+        if (body.clinicName  !== undefined) f.clinic_name  = body.clinicName;
+        if (body.clinicSlug  !== undefined) f.clinic_slug  = body.clinicSlug;
+        if (body.currency    !== undefined) f.currency     = body.currency;
+        if (body.timezone    !== undefined) f.timezone     = body.timezone;
+        if (body.notifEmail  !== undefined) f.notif_email  = body.notifEmail;
+        if (body.notifSms    !== undefined) f.notif_sms    = body.notifSms;
+        if (body.notifWa     !== undefined) f.notif_wa     = body.notifWa;
+        if (body.notifPush   !== undefined) f.notif_push   = body.notifPush;
+        f.updated_at = Date.now();
+        // Ensure the settings row exists first
+        await db`INSERT INTO settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`;
+        await db`UPDATE settings SET ${db(f)} WHERE id = 1`;
+        const [final] = await db`SELECT * FROM settings WHERE id = 1`;
+        return send(res, 200, { settings: mapSettings(final) });
+      }
+    } catch (err) {
+      console.error("settings error:", err);
+      return send(res, 500, { error: err.message });
+    }
+  }
+
+  return send(res, 404, { error: "API route not found", path, method });
 }

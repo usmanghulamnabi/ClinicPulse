@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/popover";
 import {
   Plus, Trash2, Save, ArrowLeft, AlertTriangle, Sparkles, FlaskConical, Calculator,
-  BookmarkPlus, FileText, Search,
+  BookmarkPlus, FileText, Search, Loader2,
 } from "lucide-react";
 import { RX_TEMPLATES } from "@/lib/demo-data";
 import { PEDIATRIC_DOSES, calculatePediatricDose } from "@/lib/pediatric-doses";
@@ -24,10 +24,27 @@ type Item = { id: string; medicineId: number | null; dose: string; frequency: st
 
 const FREQS = ["1-0-0","0-1-0","0-0-1","1-0-1","1-1-1","1-1-1-1","PRN","STAT"];
 
+/** Read ?patientId=N from the hash portion of the URL (hash routing). */
+function getHashQueryParam(name: string): string | null {
+  try {
+    const hash = window.location.hash; // e.g. "#/prescriptions/new?patientId=3"
+    const qIdx = hash.indexOf("?");
+    if (qIdx === -1) return null;
+    const params = new URLSearchParams(hash.slice(qIdx + 1));
+    return params.get(name);
+  } catch {
+    return null;
+  }
+}
+
 export default function PrescriptionBuilder() {
   const [, setLocation] = useLocation();
-  const { patients: PATIENTS, medicines: MEDICINES, addPrescription } = useStore();
-  const [patientId, setPatientId] = useState<number>(PATIENTS[0]?.id ?? 1);
+  const { patients: PATIENTS, medicines: MEDICINES, addPrescription, loading } = useStore();
+
+  // Read patientId from hash query param (e.g. #/prescriptions/new?patientId=3)
+  const urlPatientId = parseInt(getHashQueryParam("patientId") ?? "0") || 0;
+  const defaultPatientId = urlPatientId || PATIENTS[0]?.id || 0;
+  const [patientId, setPatientId] = useState<number>(defaultPatientId);
   const [diagnosis, setDiagnosis] = useState("Type 2 Diabetes follow-up");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<Item[]>([
@@ -135,6 +152,20 @@ export default function PrescriptionBuilder() {
 
     toast({ title: "Calculated dose added", description: `${doseRule.drug}: ${doseResult.prescriptionDose} ${doseResult.frequency}.` });
   };
+
+  // Show a loading state while store is bootstrapping from API
+  if (loading && PATIENTS.length === 0) {
+    return (
+      <PageContainer>
+        <Link href="/prescriptions" className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground hover:text-foreground mb-4">
+          <ArrowLeft className="h-3.5 w-3.5" /> Back
+        </Link>
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      </PageContainer>
+    );
+  }
 
   return (
     <PageContainer>

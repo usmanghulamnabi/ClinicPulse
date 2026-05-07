@@ -7,19 +7,34 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Phone, Mail, MapPin, Calendar, Pill, FileText, Activity, ShieldAlert,
-  Stethoscope, Plus, Heart, AlertCircle, ArrowLeft, Download,
+  Stethoscope, Plus, Heart, AlertCircle, ArrowLeft, Download, Loader2,
 } from "lucide-react";
 import { BRANCHES, fmtRelative } from "@/lib/seed-data";
 import { useStore } from "@/lib/store";
 
 export default function PatientDetail() {
   const [, params] = useRoute("/patients/:id");
-  const id = parseInt(params?.id ?? "1");
-  const { patients, prescriptions, doctors } = useStore();
-  const p = patients.find(x => x.id === id) ?? patients[0];
+  const id = parseInt(params?.id ?? "0");
+  const { patients, prescriptions, doctors, loading } = useStore();
+
+  const p = patients.find(x => x.id === id) ?? (id === 0 ? patients[0] : undefined);
   const doctor = doctors.find(d => d.id === p?.doctorId);
   const branch = BRANCHES.find(b => b.id === p?.branchId);
   const rxs = prescriptions.filter(r => r.patientId === p?.id);
+
+  /* While API data is loading, show spinner instead of "not found" */
+  if (!p && loading) {
+    return (
+      <PageContainer>
+        <Link href="/patients" className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground hover:text-foreground mb-4">
+          <ArrowLeft className="h-3.5 w-3.5" /> Back to patients
+        </Link>
+        <div className="flex items-center justify-center py-24">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      </PageContainer>
+    );
+  }
 
   if (!p) {
     return (
@@ -27,7 +42,14 @@ export default function PatientDetail() {
         <Link href="/patients" className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground hover:text-foreground mb-4">
           <ArrowLeft className="h-3.5 w-3.5" /> Back to patients
         </Link>
-        <Card className="p-6 text-center text-muted-foreground">Patient not found.</Card>
+        <Card className="p-10 text-center">
+          <div className="text-4xl mb-3">🔍</div>
+          <p className="font-medium">Patient not found</p>
+          <p className="text-[13px] text-muted-foreground mt-1">This record may have been deleted or the link is invalid.</p>
+          <Link href="/patients">
+            <Button variant="outline" size="sm" className="mt-4">Return to patients list</Button>
+          </Link>
+        </Card>
       </PageContainer>
     );
   }
@@ -41,10 +63,16 @@ export default function PatientDetail() {
       <PageHeader
         title={
           <div className="flex items-center gap-3">
-            <Avatar className="h-11 w-11"><AvatarFallback className="bg-primary/10 text-primary text-[14px] font-semibold">{p.fullName.split(" ").map(s => s[0]).slice(0,2).join("")}</AvatarFallback></Avatar>
+            <Avatar className="h-11 w-11">
+              <AvatarFallback className="bg-primary/10 text-primary text-[14px] font-semibold">
+                {p.fullName.split(" ").map(s => s[0]).slice(0,2).join("")}
+              </AvatarFallback>
+            </Avatar>
             <div>
               <div className="text-xl font-semibold tracking-tight">{p.fullName}</div>
-              <div className="text-[12px] text-muted-foreground tabular-nums font-mono mt-0.5">{p.mrn} · {p.gender} · {p.age}y · {p.bloodGroup}</div>
+              <div className="text-[12px] text-muted-foreground tabular-nums font-mono mt-0.5">
+                {p.mrn} · {p.gender} · {p.age}y · {p.bloodGroup}
+              </div>
             </div>
           </div>
         }
@@ -64,12 +92,25 @@ export default function PatientDetail() {
           <Card className="p-5 border-card-border">
             <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-3">Contact</div>
             <div className="space-y-2.5 text-[13px]">
-              <div className="flex items-center gap-2"><Phone className="h-4 w-4 text-muted-foreground" /> {p.phone}</div>
-              <div className="flex items-center gap-2"><Mail className="h-4 w-4 text-muted-foreground" /> {p.email}</div>
-              <div className="flex items-start gap-2"><MapPin className="h-4 w-4 text-muted-foreground mt-0.5" /> <span className="text-muted-foreground">{p.address}</span></div>
-              <div className="flex items-center gap-2 pt-1.5 border-t border-border"><Stethoscope className="h-4 w-4 text-muted-foreground" /> {doctor?.fullName ?? "—"} · {doctor?.specialty ?? "—"}</div>
-              <div className="flex items-center gap-2"><Calendar className="h-4 w-4 text-muted-foreground" /> Registered {fmtRelative(p.createdAt)}</div>
-              {branch && <div className="flex items-center gap-2"><MapPin className="h-4 w-4 text-muted-foreground" /> {branch.name} · {branch.city}</div>}
+              <div className="flex items-center gap-2"><Phone className="h-4 w-4 text-muted-foreground" /> {p.phone || "—"}</div>
+              <div className="flex items-center gap-2"><Mail className="h-4 w-4 text-muted-foreground" /> {p.email || "—"}</div>
+              <div className="flex items-start gap-2">
+                <MapPin className="h-4 w-4 text-muted-foreground mt-0.5" />
+                <span className="text-muted-foreground">{p.address || "—"}</span>
+              </div>
+              <div className="flex items-center gap-2 pt-1.5 border-t border-border">
+                <Stethoscope className="h-4 w-4 text-muted-foreground" />
+                <span>{doctor?.fullName ?? "Unassigned"}</span>
+                {doctor?.specialty && <span className="text-muted-foreground">· {doctor.specialty}</span>}
+              </div>
+              <div className="flex items-center gap-2">
+                <Calendar className="h-4 w-4 text-muted-foreground" /> Registered {fmtRelative(p.createdAt)}
+              </div>
+              {branch && (
+                <div className="flex items-center gap-2">
+                  <MapPin className="h-4 w-4 text-muted-foreground" /> {branch.name} · {branch.city}
+                </div>
+              )}
             </div>
           </Card>
 
@@ -77,11 +118,11 @@ export default function PatientDetail() {
             <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-3 flex items-center gap-1.5">
               <ShieldAlert className="h-3.5 w-3.5 text-rose-500" /> Allergies & alerts
             </div>
-            {p.allergies.length === 0 ? (
+            {(p.allergies?.length ?? 0) === 0 ? (
               <div className="text-[12.5px] text-muted-foreground italic">No known allergies</div>
             ) : (
               <div className="flex flex-wrap gap-1.5">
-                {p.allergies.map(a => (
+                {(p.allergies ?? []).map(a => (
                   <Badge key={a} variant="outline" className="border-rose-500/30 text-rose-600 dark:text-rose-400 gap-1">
                     <AlertCircle className="h-3 w-3" /> {a}
                   </Badge>
@@ -89,11 +130,11 @@ export default function PatientDetail() {
               </div>
             )}
             <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mt-4 mb-2">Chronic conditions</div>
-            {p.chronic.length === 0 ? (
+            {(p.chronic?.length ?? 0) === 0 ? (
               <div className="text-[12.5px] text-muted-foreground italic">None recorded</div>
             ) : (
               <div className="flex flex-wrap gap-1.5">
-                {p.chronic.map(c => <Badge key={c} variant="secondary">{c}</Badge>)}
+                {(p.chronic ?? []).map(c => <Badge key={c} variant="secondary">{c}</Badge>)}
               </div>
             )}
           </Card>
@@ -113,19 +154,19 @@ export default function PatientDetail() {
           <Card className="p-5 border-card-border">
             <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-3">Family & vaccinations</div>
             <div className="space-y-1.5 text-[13px]">
-              {p.family.mother && <div>Mother: <span className="text-muted-foreground">{p.family.mother}</span></div>}
-              {p.family.father && <div>Father: <span className="text-muted-foreground">{p.family.father}</span></div>}
-              {p.family.siblings && <div>Siblings: <span className="text-muted-foreground">{p.family.siblings}</span></div>}
-              {!p.family.mother && !p.family.father && !p.family.siblings && (
+              {p.family?.mother && <div>Mother: <span className="text-muted-foreground">{p.family.mother}</span></div>}
+              {p.family?.father && <div>Father: <span className="text-muted-foreground">{p.family.father}</span></div>}
+              {p.family?.siblings && <div>Siblings: <span className="text-muted-foreground">{p.family.siblings}</span></div>}
+              {!p.family?.mother && !p.family?.father && !p.family?.siblings && (
                 <div className="text-[12.5px] text-muted-foreground italic">No family history recorded</div>
               )}
               <div className="pt-2 border-t border-border">
                 <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-1.5">Vaccines</div>
-                {p.vaccinations.length === 0 ? (
+                {(p.vaccinations?.length ?? 0) === 0 ? (
                   <div className="text-[12.5px] text-muted-foreground italic">None recorded</div>
                 ) : (
                   <div className="flex flex-wrap gap-1.5">
-                    {p.vaccinations.map(v => <Badge key={v} variant="outline">{v}</Badge>)}
+                    {(p.vaccinations ?? []).map(v => <Badge key={v} variant="outline">{v}</Badge>)}
                   </div>
                 )}
               </div>
@@ -146,11 +187,15 @@ export default function PatientDetail() {
 
               {/* Timeline */}
               <TabsContent value="timeline" className="p-5">
-                {p.visits.length === 0 ? (
-                  <div className="text-[13px] text-muted-foreground italic">No visits recorded yet.</div>
+                {(p.visits?.length ?? 0) === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-10 text-center">
+                    <Calendar className="h-8 w-8 text-muted-foreground/40 mb-2" />
+                    <p className="text-[13px] text-muted-foreground">No visits recorded yet.</p>
+                    <p className="text-[11.5px] text-muted-foreground/70 mt-1">Visits are created when appointments are completed.</p>
+                  </div>
                 ) : (
                   <div className="relative pl-6 space-y-5 before:absolute before:left-[7px] before:top-1.5 before:bottom-1.5 before:w-px before:bg-border">
-                    {p.visits.map(v => {
+                    {(p.visits ?? []).map(v => {
                       const d = doctors.find(x => x.id === v.doctorId);
                       return (
                         <div key={v.id} className="relative">
@@ -159,12 +204,12 @@ export default function PatientDetail() {
                             <div className="text-[13px] font-medium">{v.diagnosis}</div>
                             <Badge variant="secondary" className="text-[10px]">{new Date(v.date).toLocaleDateString()}</Badge>
                           </div>
-                          <div className="text-[11.5px] text-muted-foreground">{d?.fullName ?? "—"} · {d?.specialty ?? "—"}</div>
+                          <div className="text-[11.5px] text-muted-foreground">{d?.fullName ?? "Unassigned"} {d?.specialty ? `· ${d.specialty}` : ""}</div>
                           <div className="mt-2 grid sm:grid-cols-2 gap-2 text-[12px]">
-                            <div className="rounded-md border border-border p-2.5"><div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Subjective</div>{v.soap.s}</div>
-                            <div className="rounded-md border border-border p-2.5"><div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Objective</div>{v.soap.o}</div>
-                            <div className="rounded-md border border-border p-2.5"><div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Assessment</div>{v.soap.a}</div>
-                            <div className="rounded-md border border-border p-2.5"><div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Plan</div>{v.soap.p}</div>
+                            <div className="rounded-md border border-border p-2.5"><div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Subjective</div>{v.soap?.s}</div>
+                            <div className="rounded-md border border-border p-2.5"><div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Objective</div>{v.soap?.o}</div>
+                            <div className="rounded-md border border-border p-2.5"><div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Assessment</div>{v.soap?.a}</div>
+                            <div className="rounded-md border border-border p-2.5"><div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Plan</div>{v.soap?.p}</div>
                           </div>
                         </div>
                       );
@@ -176,7 +221,15 @@ export default function PatientDetail() {
               {/* Prescriptions */}
               <TabsContent value="prescriptions" className="p-5">
                 {rxs.length === 0 ? (
-                  <div className="text-[13px] text-muted-foreground italic">No prescriptions yet.</div>
+                  <div className="flex flex-col items-center justify-center py-10 text-center">
+                    <Pill className="h-8 w-8 text-muted-foreground/40 mb-2" />
+                    <p className="text-[13px] text-muted-foreground">No prescriptions yet.</p>
+                    <Link href={`/prescriptions/new?patientId=${p.id}`}>
+                      <Button variant="outline" size="sm" className="mt-4 gap-1.5">
+                        <Plus className="h-3.5 w-3.5" /> Create first prescription
+                      </Button>
+                    </Link>
+                  </div>
                 ) : (
                   <div className="space-y-2">
                     {rxs.map(r => (

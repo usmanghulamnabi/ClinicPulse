@@ -18,7 +18,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
-import { Plus, Search, FileDown, Phone, MapPin, ShieldAlert, Trash2 } from "lucide-react";
+import { Plus, Search, FileDown, Phone, MapPin, ShieldAlert, Trash2, Loader2, Users } from "lucide-react";
 import { fmtRelative } from "@/lib/seed-data";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/components/AuthProvider";
@@ -33,7 +33,7 @@ export default function Patients() {
   const [addOpen, setAddOpen] = useState(false);
   const { toast } = useToast();
   const { user } = useAuth();
-  const { patients, deletePatient, deletePatientsMany, addPatient } = useStore();
+  const { patients, deletePatient, deletePatientsMany, addPatient, loading } = useStore();
   const canDelete = user?.role === "admin";
 
   /* form refs for add patient */
@@ -265,6 +265,11 @@ export default function Patients() {
       </Card>
 
       <Card className="border-card-border overflow-hidden">
+        {loading && patients.length === 0 ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-[13px]">
             <thead className="bg-muted/40">
@@ -290,7 +295,7 @@ export default function Patients() {
               {filtered.map(p => {
                 const isSelected = selectedIds.has(p.id);
                 return (
-                  <tr key={p.id} className={`border-t border-border hover:bg-muted/30 ${isSelected ? "bg-primary/5" : ""}`}>
+                  <tr key={p.id} className={`border-t border-border hover:bg-muted/30 transition-colors ${isSelected ? "bg-primary/5" : ""}`}>
                     {canDelete && (
                       <td className="px-4 py-2.5">
                         <Checkbox
@@ -307,7 +312,7 @@ export default function Patients() {
                           <div className="font-medium group-hover:text-primary truncate">{p.fullName}</div>
                           <div className="text-[11px] text-muted-foreground tabular-nums">{p.mrn} · {p.gender} · {p.age}y · {p.bloodGroup}</div>
                         </div>
-                        {p.allergies.length > 0 && (
+                        {(p.allergies?.length ?? 0) > 0 && (
                           <Badge variant="outline" className="ml-2 gap-1 border-rose-500/30 text-rose-600 dark:text-rose-400 text-[10px]">
                             <ShieldAlert className="h-3 w-3" /> Allergy
                           </Badge>
@@ -337,16 +342,19 @@ export default function Patients() {
                   </tr>
                 );
               })}
-              {filtered.length === 0 && (
+              {filtered.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={canDelete ? 6 : 4} className="px-4 py-8 text-center text-muted-foreground text-[13px]">
-                    No patients match your filters.
+                  <td colSpan={canDelete ? 6 : 4} className="px-4 py-14 text-center">
+                    <Users className="h-8 w-8 text-muted-foreground/40 mx-auto mb-2" />
+                    <p className="text-[13px] text-muted-foreground font-medium">No patients match your filters</p>
+                    <p className="text-[11.5px] text-muted-foreground/70 mt-1">Try adjusting your search or filters.</p>
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
+        )}
       </Card>
     </PageContainer>
   );

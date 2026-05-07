@@ -12,7 +12,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
-import { Plus, Search, Scan, FileDown, AlertTriangle, Clock, Trash2 } from "lucide-react";
+import { Plus, Search, Scan, FileDown, AlertTriangle, Clock, Trash2, Loader2, Package } from "lucide-react";
 import { fmtMoney } from "@/lib/seed-data";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/components/AuthProvider";
@@ -24,7 +24,7 @@ export default function Inventory() {
   const [addOpen, setAddOpen] = useState(false);
   const { toast } = useToast();
   const { user } = useAuth();
-  const { medicines, deleteMedicine, addMedicine } = useStore();
+  const { medicines, deleteMedicine, addMedicine, loading } = useStore();
   const canDelete = user?.role === "admin";
 
   /* form refs */
@@ -175,6 +175,21 @@ export default function Inventory() {
       </Card>
 
       <Card className="border-card-border overflow-hidden">
+        {loading && medicines.length === 0 ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : list.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-14 text-center">
+            <Package className="h-8 w-8 text-muted-foreground/40 mb-2" />
+            <p className="text-[13px] text-muted-foreground font-medium">
+              {q ? "No medicines match your search" : "Inventory is empty"}
+            </p>
+            <p className="text-[11.5px] text-muted-foreground/70 mt-1">
+              {q ? "Try a different name or barcode." : "Add your first medicine to get started."}
+            </p>
+          </div>
+        ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-[13px]">
             <thead className="bg-muted/40">
@@ -236,6 +251,7 @@ export default function Inventory() {
             </tbody>
           </table>
         </div>
+        )}
       </Card>
     </PageContainer>
   );

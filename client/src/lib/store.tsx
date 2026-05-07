@@ -1,13 +1,12 @@
 /**
  * ClinicPulse App Store
  *
- * Provides React Context state for patients, prescriptions, medicines, and doctors.
+ * React Context that:
+ * - On mount: fetches patients, prescriptions, medicines, doctors, settings from API in parallel.
+ * - All mutations: call the API first, update local state on success.
+ * - Falls back to seed data silently when DB is unavailable (e.g. POSTGRES_URL not set).
  *
- * On mount: fetches all four resource lists from the API in parallel.
- * All mutations: call the corresponding API endpoint, then update local state
- * on success — ensuring data survives Vercel cold starts and page reloads.
- *
- * Persistence: Postgres via POSTGRES_URL (set in Vercel project settings).
+ * Persistence: Postgres via POSTGRES_URL (Vercel env var).
  */
 import {
   createContext,
@@ -31,6 +30,30 @@ import {
 /* ── Re-export types ─────────────────────────────────────────────────────── */
 export type { Patient, Prescription, Medicine, Doctor };
 
+/* ── Settings type ───────────────────────────────────────────────────────── */
+export interface ClinicSettings {
+  clinicName:  string;
+  clinicSlug:  string;
+  currency:    string;
+  timezone:    string;
+  notifEmail:  boolean;
+  notifSms:    boolean;
+  notifWa:     boolean;
+  notifPush:   boolean;
+  updatedAt?:  number;
+}
+
+const DEFAULT_SETTINGS: ClinicSettings = {
+  clinicName:  "ClinicPulse Health",
+  clinicSlug:  "clinicpulse-health",
+  currency:    "PKR (₨)",
+  timezone:    "Asia/Karachi",
+  notifEmail:  true,
+  notifSms:    false,
+  notifWa:     true,
+  notifPush:   true,
+};
+
 /* ── API helpers ─────────────────────────────────────────────────────────── */
 
 async function apiFetch(url: string): Promise<unknown> {
@@ -49,8 +72,8 @@ async function apiMutate(
 ): Promise<unknown> {
   const res = await fetch(url, {
     method,
-    headers: data ? { "Content-Type": "application/json" } : {},
-    body: data ? JSON.stringify(data) : undefined,
+    headers: data !== undefined ? { "Content-Type": "application/json" } : {},
+    body: data !== undefined ? JSON.stringify(data) : undefined,
   });
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
@@ -59,7 +82,7 @@ async function apiMutate(
   return res.json();
 }
 
-/* ── Context types ───────────────────────────────────────────────────────── */
+/* ── Context type ────────────────────────────────────────────────────────── */
 
 interface AppStore {
   loading: boolean;
@@ -87,6 +110,11 @@ interface AppStore {
   doctors: Doctor[];
   addDoctor: (d: Omit<Doctor, "id">) => Promise<Doctor>;
   updateDoctor: (id: number, patch: Partial<Doctor>) => Promise<void>;
+  deleteDoctor: (id: number) => Promise<void>;
+
+  /* settings */
+  settings: ClinicSettings;
+  updateSettings: (patch: Partial<ClinicSettings>) => Promise<void>;
 }
 
 /* ── Context ─────────────────────────────────────────────────────────────── */
@@ -101,6 +129,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [prescriptions, setPrescriptions] = useState<Prescription[]>(SEED_PRESCRIPTIONS);
   const [medicines, setMedicines] = useState<Medicine[]>(SEED_MEDICINES);
   const [doctors, setDoctors] = useState<Doctor[]>(SEED_DOCTORS);
+  const [settings, setSettings] = useState<ClinicSettings>(DEFAULT_SETTINGS);
 
   /* ── Bootstrap: fetch all resources on mount ── */
   useEffect(() => {
@@ -108,32 +137,39 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
     async function loadAll() {
       try {
-        const [pRes, rxRes, medRes, drRes] = await Promise.all([
+        const [pRes, rxRes, medRes, drRes, stRes] = await Promise.all([
           apiFetch("/api/patients"),
           apiFetch("/api/prescriptions"),
           apiFetch("/api/medicines"),
           apiFetch("/api/doctors"),
+          apiFetch("/api/settings"),
         ]);
 
         if (cancelled) return;
 
-        const pData = pRes as { patients?: Patient[] };
+        const pData  = pRes  as { patients?:      Patient[]      };
         const rxData = rxRes as { prescriptions?: Prescription[] };
-        const medData = medRes as { medicines?: Medicine[] };
-        const drData = drRes as { doctors?: Doctor[] };
+        const mData  = medRes as { medicines?:     Medicine[]     };
+        const dData  = drRes as { doctors?:        Doctor[]       };
+        const sData  = stRes as { settings?:       ClinicSettings };
 
-        if (Array.isArray(pData?.patients))   setPatients(pData.patients);
+        if (Array.isArray(pData?.patients))       setPatients(pData.patients);
         if (Array.isArray(rxData?.prescriptions)) setPrescriptions(rxData.prescriptions);
-        if (Array.isArray(medData?.medicines)) setMedicines(medData.medicines);
-        if (Array.isArray(drData?.doctors))   setDoctors(drData.doctors);
+        if (Array.isArray(mData?.medicines))      setMedicines(mData.medicines);
+        if (Array.isArray(dData?.doctors))        setDoctors(dData.doctors);
+        if (sData?.settings)                      setSettings(sData.settings);
       } catch (err) {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : String(err);
-          // If DB is not configured fall back to seed data silently
-          if (msg.includes("503") || msg.includes("Database unavailable") || msg.includes("POSTGRES_URL")) {
-            console.warn("ClinicPulse: DB not available, using seed data.", msg);
+          if (
+            msg.includes("503") ||
+            msg.includes("Database unavailable") ||
+            msg.includes("POSTGRES_URL")
+          ) {
+            // DB not configured — fall back to seed data silently
+            console.warn("ClinicPulse: DB unavailable, using seed data:", msg);
           } else {
-            console.error("ClinicPulse: Failed to load data from API.", msg);
+            console.error("ClinicPulse: Failed to load data:", msg);
             setError(msg);
           }
         }
@@ -202,7 +238,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     return medicine;
   }, []);
 
-  // updateMedicine stays local (no PATCH endpoint needed for now)
+  // updateMedicine: local-only (stock adjustments, no PATCH endpoint needed)
   const updateMedicine = useCallback((id: number, patch: Partial<Medicine>) => {
     setMedicines(cur => cur.map(m => m.id === id ? { ...m, ...patch } : m));
   }, []);
@@ -226,6 +262,22 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setDoctors(cur => cur.map(d => d.id === id ? data.doctor : d));
   }, []);
 
+  const deleteDoctor = useCallback(async (id: number) => {
+    await apiMutate("DELETE", `/api/doctors/${id}`);
+    setDoctors(cur => cur.filter(d => d.id !== id));
+    // Null out doctorId on patients whose doctor was deleted (local state)
+    setPatients(cur => cur.map(p => p.doctorId === id ? { ...p, doctorId: null as unknown as number } : p));
+    // Null out doctorId on prescriptions (local state)
+    setPrescriptions(cur => cur.map(rx => rx.doctorId === id ? { ...rx, doctorId: null as unknown as number } : rx));
+  }, []);
+
+  /* ── Settings ── */
+
+  const updateSettings = useCallback(async (patch: Partial<ClinicSettings>) => {
+    const data = await apiMutate("PATCH", "/api/settings", patch) as { settings: ClinicSettings };
+    setSettings(data.settings);
+  }, []);
+
   /* ── Provider ── */
   return (
     <Ctx.Provider
@@ -235,7 +287,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         patients, addPatient, updatePatient, deletePatient, deletePatientsMany,
         prescriptions, addPrescription, updatePrescription,
         medicines, addMedicine, updateMedicine, deleteMedicine,
-        doctors, addDoctor, updateDoctor,
+        doctors, addDoctor, updateDoctor, deleteDoctor,
+        settings, updateSettings,
       }}
     >
       {children}
