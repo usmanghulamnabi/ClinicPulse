@@ -42,7 +42,7 @@ export default function Appointments() {
             <Button variant="outline" size="sm" className="gap-1.5" onClick={() => toast({ title: "Reminders sent", description: "WhatsApp & SMS reminders dispatched to today's patients." })}>
               <Bell className="h-4 w-4"/> Send reminders
             </Button>
-            <Button size="sm" className="gap-1.5" onClick={() => toast({ title: "Booking opened", description: "Use the new appointment dialog (demo)." })}>
+            <Button size="sm" className="gap-1.5" onClick={() => toast({ title: "Book appointment", description: "Select a patient and time slot to schedule." })}>
               <Plus className="h-4 w-4"/> Book appointment
             </Button>
           </>

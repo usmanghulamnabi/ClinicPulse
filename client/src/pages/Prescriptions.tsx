@@ -6,21 +6,24 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Search, Pill, Stethoscope, FileDown, Calendar } from "lucide-react";
-import { PRESCRIPTIONS, PATIENTS, MEDICINES, fmtMoney, fmtRelative } from "@/lib/demo-data";
+import { fmtMoney, fmtRelative } from "@/lib/seed-data";
+import { useStore } from "@/lib/store";
 
 export default function Prescriptions() {
   const [q, setQ] = useState("");
-  const filtered = useMemo(() => PRESCRIPTIONS.filter(r => {
+  const { prescriptions, patients } = useStore();
+
+  const filtered = useMemo(() => prescriptions.filter(r => {
     if (!q) return true;
-    const p = PATIENTS.find(x => x.id === r.patientId);
+    const p = patients.find(x => x.id === r.patientId);
     return p?.fullName.toLowerCase().includes(q.toLowerCase()) || r.diagnosis.toLowerCase().includes(q.toLowerCase());
-  }), [q]);
+  }), [q, prescriptions, patients]);
 
   return (
     <PageContainer>
       <PageHeader
         title="Prescriptions"
-        subtitle={`${PRESCRIPTIONS.length} total prescriptions for your clinic`}
+        subtitle={`${prescriptions.length} total prescriptions for your clinic`}
         actions={
           <>
             <Button variant="outline" size="sm" className="gap-1.5"><FileDown className="h-4 w-4" /> Export</Button>
@@ -39,8 +42,9 @@ export default function Prescriptions() {
       </Card>
 
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {filtered.slice(0, 30).map(r => {
-          const p = PATIENTS.find(x => x.id === r.patientId)!;
+        {filtered.map(r => {
+          const p = patients.find(x => x.id === r.patientId);
+          if (!p) return null;
           return (
             <Link key={r.id} href={`/prescriptions/${r.id}`}>
               <Card className="p-4 border-card-border hover-elevate cursor-pointer group">
@@ -66,6 +70,11 @@ export default function Prescriptions() {
             </Link>
           );
         })}
+        {filtered.length === 0 && (
+          <div className="col-span-3 text-center py-12 text-muted-foreground text-[13px]">
+            No prescriptions match your search.
+          </div>
+        )}
       </div>
     </PageContainer>
   );

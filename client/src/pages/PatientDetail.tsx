@@ -9,15 +9,28 @@ import {
   Phone, Mail, MapPin, Calendar, Pill, FileText, Activity, ShieldAlert,
   Stethoscope, Plus, Heart, AlertCircle, ArrowLeft, Download,
 } from "lucide-react";
-import { PATIENTS, DOCTORS, BRANCHES, PRESCRIPTIONS, MEDICINES, fmtRelative } from "@/lib/demo-data";
+import { BRANCHES, fmtRelative } from "@/lib/seed-data";
+import { useStore } from "@/lib/store";
 
 export default function PatientDetail() {
   const [, params] = useRoute("/patients/:id");
   const id = parseInt(params?.id ?? "1");
-  const p = PATIENTS.find(x => x.id === id) ?? PATIENTS[0];
-  const doctor = DOCTORS.find(d => d.id === p.doctorId);
-  const branch = BRANCHES.find(b => b.id === p.branchId);
-  const rxs = PRESCRIPTIONS.filter(r => r.patientId === p.id);
+  const { patients, prescriptions, doctors } = useStore();
+  const p = patients.find(x => x.id === id) ?? patients[0];
+  const doctor = doctors.find(d => d.id === p?.doctorId);
+  const branch = BRANCHES.find(b => b.id === p?.branchId);
+  const rxs = prescriptions.filter(r => r.patientId === p?.id);
+
+  if (!p) {
+    return (
+      <PageContainer>
+        <Link href="/patients" className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground hover:text-foreground mb-4">
+          <ArrowLeft className="h-3.5 w-3.5" /> Back to patients
+        </Link>
+        <Card className="p-6 text-center text-muted-foreground">Patient not found.</Card>
+      </PageContainer>
+    );
+  }
 
   return (
     <PageContainer>
@@ -54,9 +67,9 @@ export default function PatientDetail() {
               <div className="flex items-center gap-2"><Phone className="h-4 w-4 text-muted-foreground" /> {p.phone}</div>
               <div className="flex items-center gap-2"><Mail className="h-4 w-4 text-muted-foreground" /> {p.email}</div>
               <div className="flex items-start gap-2"><MapPin className="h-4 w-4 text-muted-foreground mt-0.5" /> <span className="text-muted-foreground">{p.address}</span></div>
-              <div className="flex items-center gap-2 pt-1.5 border-t border-border"><Stethoscope className="h-4 w-4 text-muted-foreground" /> {doctor?.fullName} · {doctor?.specialty}</div>
+              <div className="flex items-center gap-2 pt-1.5 border-t border-border"><Stethoscope className="h-4 w-4 text-muted-foreground" /> {doctor?.fullName ?? "—"} · {doctor?.specialty ?? "—"}</div>
               <div className="flex items-center gap-2"><Calendar className="h-4 w-4 text-muted-foreground" /> Registered {fmtRelative(p.createdAt)}</div>
-              <div className="flex items-center gap-2"><MapPin className="h-4 w-4 text-muted-foreground" /> {branch?.name} · {branch?.city}</div>
+              {branch && <div className="flex items-center gap-2"><MapPin className="h-4 w-4 text-muted-foreground" /> {branch.name} · {branch.city}</div>}
             </div>
           </Card>
 
@@ -103,11 +116,18 @@ export default function PatientDetail() {
               {p.family.mother && <div>Mother: <span className="text-muted-foreground">{p.family.mother}</span></div>}
               {p.family.father && <div>Father: <span className="text-muted-foreground">{p.family.father}</span></div>}
               {p.family.siblings && <div>Siblings: <span className="text-muted-foreground">{p.family.siblings}</span></div>}
+              {!p.family.mother && !p.family.father && !p.family.siblings && (
+                <div className="text-[12.5px] text-muted-foreground italic">No family history recorded</div>
+              )}
               <div className="pt-2 border-t border-border">
                 <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-1.5">Vaccines</div>
-                <div className="flex flex-wrap gap-1.5">
-                  {p.vaccinations.map(v => <Badge key={v} variant="outline">{v}</Badge>)}
-                </div>
+                {p.vaccinations.length === 0 ? (
+                  <div className="text-[12.5px] text-muted-foreground italic">None recorded</div>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {p.vaccinations.map(v => <Badge key={v} variant="outline">{v}</Badge>)}
+                  </div>
+                )}
               </div>
             </div>
           </Card>
@@ -126,27 +146,31 @@ export default function PatientDetail() {
 
               {/* Timeline */}
               <TabsContent value="timeline" className="p-5">
-                <div className="relative pl-6 space-y-5 before:absolute before:left-[7px] before:top-1.5 before:bottom-1.5 before:w-px before:bg-border">
-                  {p.visits.map(v => {
-                    const d = DOCTORS.find(x => x.id === v.doctorId);
-                    return (
-                      <div key={v.id} className="relative">
-                        <span className="absolute -left-6 top-1.5 h-3.5 w-3.5 rounded-full bg-primary ring-4 ring-background" />
-                        <div className="flex items-center gap-2">
-                          <div className="text-[13px] font-medium">{v.diagnosis}</div>
-                          <Badge variant="secondary" className="text-[10px]">{new Date(v.date).toLocaleDateString()}</Badge>
+                {p.visits.length === 0 ? (
+                  <div className="text-[13px] text-muted-foreground italic">No visits recorded yet.</div>
+                ) : (
+                  <div className="relative pl-6 space-y-5 before:absolute before:left-[7px] before:top-1.5 before:bottom-1.5 before:w-px before:bg-border">
+                    {p.visits.map(v => {
+                      const d = doctors.find(x => x.id === v.doctorId);
+                      return (
+                        <div key={v.id} className="relative">
+                          <span className="absolute -left-6 top-1.5 h-3.5 w-3.5 rounded-full bg-primary ring-4 ring-background" />
+                          <div className="flex items-center gap-2">
+                            <div className="text-[13px] font-medium">{v.diagnosis}</div>
+                            <Badge variant="secondary" className="text-[10px]">{new Date(v.date).toLocaleDateString()}</Badge>
+                          </div>
+                          <div className="text-[11.5px] text-muted-foreground">{d?.fullName ?? "—"} · {d?.specialty ?? "—"}</div>
+                          <div className="mt-2 grid sm:grid-cols-2 gap-2 text-[12px]">
+                            <div className="rounded-md border border-border p-2.5"><div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Subjective</div>{v.soap.s}</div>
+                            <div className="rounded-md border border-border p-2.5"><div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Objective</div>{v.soap.o}</div>
+                            <div className="rounded-md border border-border p-2.5"><div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Assessment</div>{v.soap.a}</div>
+                            <div className="rounded-md border border-border p-2.5"><div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Plan</div>{v.soap.p}</div>
+                          </div>
                         </div>
-                        <div className="text-[11.5px] text-muted-foreground">{d?.fullName} · {d?.specialty}</div>
-                        <div className="mt-2 grid sm:grid-cols-2 gap-2 text-[12px]">
-                          <div className="rounded-md border border-border p-2.5"><div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Subjective</div>{v.soap.s}</div>
-                          <div className="rounded-md border border-border p-2.5"><div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Objective</div>{v.soap.o}</div>
-                          <div className="rounded-md border border-border p-2.5"><div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Assessment</div>{v.soap.a}</div>
-                          <div className="rounded-md border border-border p-2.5"><div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Plan</div>{v.soap.p}</div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </TabsContent>
 
               {/* Prescriptions */}

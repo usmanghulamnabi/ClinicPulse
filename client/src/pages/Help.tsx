@@ -24,7 +24,7 @@ const FAQS = [
   },
   {
     q: "Where is patient data stored?",
-    a: "In production, data is stored in your isolated tenant's Postgres database. This preview uses in-memory demo data only.",
+    a: "Data is stored in your clinic workspace. The Vercel deployment uses in-memory state; connect a Postgres database via POSTGRES_URL for persistent storage.",
   },
   {
     q: "Can I export my data?",

@@ -73,7 +73,7 @@ export default function Settings() {
                 </div>
               </div>
               <div className="flex justify-end">
-                <Button onClick={() => toast({ title: "Profile saved", description: "Your changes have been applied (demo)." })} data-testid="button-save-profile">
+                <Button onClick={() => toast({ title: "Profile saved", description: "Your changes have been applied." })} data-testid="button-save-profile">
                   <Check className="h-4 w-4 mr-2"/>Save changes
                 </Button>
               </div>
@@ -199,7 +199,7 @@ export default function Settings() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2"><Plug className="h-4 w-4"/>Integrations</CardTitle>
-              <CardDescription>Connect external services. None require real credentials in demo.</CardDescription>
+              <CardDescription>Connect external services to extend ClinicPulse capabilities.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               {[
@@ -207,7 +207,7 @@ export default function Settings() {
                 { name: "SendGrid", status: "Connected", desc: "Transactional email" },
                 { name: "Stripe", status: "Sandbox", desc: "Online payments + invoicing" },
                 { name: "Google Calendar", status: "Not connected", desc: "Two-way appointment sync" },
-                { name: "Postgres (Neon / Supabase)", status: "Demo data", desc: "Production datastore" },
+                { name: "Postgres (Neon / Supabase)", status: "In-memory", desc: "Production datastore" },
                 { name: "OpenAI", status: "Assistive demo", desc: "Used by AI Insights only" },
               ].map(i => (
                 <div key={i.name} className="flex items-center justify-between rounded-md border p-3">

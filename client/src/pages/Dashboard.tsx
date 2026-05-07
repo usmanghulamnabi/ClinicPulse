@@ -16,23 +16,25 @@ import {
 } from "lucide-react";
 import {
   dailyKPIs, monthlySeries, last30Days, peakHours, diseaseTrends, topMedicines,
-  MEDICINES, PATIENTS, PRESCRIPTIONS, APPOINTMENTS, PAYMENTS, fmtMoney,
+  APPOINTMENTS, PAYMENTS, fmtMoney,
 } from "@/lib/demo-data";
+import { useStore } from "@/lib/store";
 
 const chartColors = ["hsl(var(--chart-1))","hsl(var(--chart-2))","hsl(var(--chart-3))","hsl(var(--chart-4))","hsl(var(--chart-5))"];
 
 export default function Dashboard() {
-  const k = dailyKPIs();
+  const { patients, medicines, prescriptions } = useStore();
+  const k = dailyKPIs(patients, medicines, prescriptions);
   const [range, setRange] = useState<"day"|"week"|"month"|"year">("month");
 
   const todayAppts = APPOINTMENTS.filter(a => {
     const d = new Date(a.scheduledAt); const t = new Date(); return d.toDateString() === t.toDateString();
   }).slice(0, 6);
 
-  const recentRx = [...PRESCRIPTIONS].sort((a,b) => b.createdAt - a.createdAt).slice(0, 5);
-  const lowStock = MEDICINES.filter(m => m.stock <= m.lowStockAt).slice(0, 4);
-  const expiring = MEDICINES.filter(m => m.expiry - Date.now() < 60*86400_000).slice(0, 4);
-  const recentPatients = [...PATIENTS].sort((a,b) => b.createdAt - a.createdAt).slice(0, 5);
+  const recentRx = [...prescriptions].sort((a,b) => b.createdAt - a.createdAt).slice(0, 5);
+  const lowStock = medicines.filter(m => m.stock <= m.lowStockAt).slice(0, 4);
+  const expiring = medicines.filter(m => m.expiry - Date.now() < 60*86400_000).slice(0, 4);
+  const recentPatients = [...patients].sort((a,b) => b.createdAt - a.createdAt).slice(0, 5);
   const paidTotal = PAYMENTS.filter(p => p.status === "paid").reduce((s, p) => s + p.amount, 0);
   const billedTotal = PAYMENTS.reduce((s, p) => s + p.amount, 0);
   const collectionRate = Math.round((paidTotal / Math.max(1, billedTotal)) * 100);
@@ -105,7 +107,7 @@ export default function Dashboard() {
               {[
                 { name: "Patient visits", value: k.patientsTotal, total: Math.max(k.patientsTotal, 120), sub: `${k.appointmentsToday} appointments today` },
                 { name: "Collections", value: paidTotal, total: Math.max(billedTotal, 1), sub: `${collectionRate}% collection rate` },
-                { name: "Prescriptions", value: k.prescriptionsToday, total: Math.max(k.prescriptionsToday, 35), sub: `${PRESCRIPTIONS.length} prescriptions this month` },
+                { name: "Prescriptions", value: k.prescriptionsToday, total: Math.max(k.prescriptionsToday, 35), sub: `${prescriptions.length} prescriptions this month` },
               ].map((row) => (
                 <div key={row.name}>
                   <div className="flex items-center justify-between text-[12.5px]">
@@ -131,11 +133,11 @@ export default function Dashboard() {
       {/* KPI grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <KpiCard label="Patients" value={k.patientsTotal} icon={Users} delta={4.2} hint="+12 this month" accent="primary" />
-        <KpiCard label="Prescriptions today" value={k.prescriptionsToday} icon={FileText} delta={6.8} hint={`${PRESCRIPTIONS.length} this month`} accent="emerald" />
+        <KpiCard label="Prescriptions today" value={k.prescriptionsToday} icon={FileText} delta={6.8} hint={`${prescriptions.length} this month`} accent="emerald" />
         <KpiCard label="Revenue today" value={k.todayRevenue} icon={Receipt} format={fmtMoney} delta={2.1} hint={`${fmtMoney(k.monthRevenue)} MTD`} accent="primary" />
         <KpiCard label="Profit today" value={k.todayProfit} icon={TrendingUp} format={fmtMoney} delta={-1.4} hint={`${fmtMoney(k.monthProfit)} MTD`} accent="amber" />
         <KpiCard label="Appointments" value={k.appointmentsToday} icon={CalendarRange} delta={1.9} hint={`${APPOINTMENTS.filter(a=>a.status==="scheduled").length} upcoming`} accent="primary" />
-        <KpiCard label="Inventory value" value={k.inventoryValue} icon={Boxes} format={fmtMoney} delta={0.8} hint={`${MEDICINES.length} SKUs`} accent="emerald" />
+        <KpiCard label="Inventory value" value={k.inventoryValue} icon={Boxes} format={fmtMoney} delta={0.8} hint={`${medicines.length} SKUs`} accent="emerald" />
         <KpiCard label="Low stock" value={k.lowStock} icon={AlertTriangle} hint="Reorder needed" accent="rose" />
         <KpiCard label="Pending dues" value={k.dues} icon={Receipt} format={fmtMoney} hint="Across patients" accent="amber" />
       </div>
@@ -257,7 +259,8 @@ export default function Dashboard() {
           </div>
           <div className="space-y-1.5">
             {todayAppts.map(a => {
-              const p = PATIENTS.find(x => x.id === a.patientId)!;
+              const p = patients.find(x => x.id === a.patientId);
+              if (!p) return null;
               const time = new Date(a.scheduledAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
               const statusColor = {
                 scheduled:    "bg-muted text-muted-foreground",
@@ -366,11 +369,11 @@ export default function Dashboard() {
             <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Recent prescriptions</div>
             <div className="mt-2 space-y-1.5">
               {recentRx.map(r => {
-                const p = PATIENTS.find(x => x.id === r.patientId)!;
+                const p = patients.find(x => x.id === r.patientId);
                 return (
                   <Link key={r.id} href={`/prescriptions/${r.id}`} className="flex items-center gap-2 px-2 py-1.5 rounded hover-elevate">
                     <Pill className="h-3.5 w-3.5 text-primary"/>
-                    <span className="text-[12.5px] truncate">{p.fullName}</span>
+                    <span className="text-[12.5px] truncate">{p?.fullName ?? "Unknown"}</span>
                     <span className="ml-auto text-[11px] text-muted-foreground tabular-nums">{r.items.length} items</span>
                   </Link>
                 );

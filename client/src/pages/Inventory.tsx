@@ -1,20 +1,40 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef } from "react";
 import { PageContainer, PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Label } from "@/components/ui/label";
 import { Plus, Search, Scan, FileDown, AlertTriangle, Clock, Trash2 } from "lucide-react";
-import { MEDICINES, fmtMoney } from "@/lib/demo-data";
+import { fmtMoney } from "@/lib/seed-data";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/components/AuthProvider";
+import { useStore } from "@/lib/store";
 
 export default function Inventory() {
   const [q, setQ] = useState("");
-  const [medicines, setMedicines] = useState(MEDICINES);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
   const { toast } = useToast();
   const { user } = useAuth();
+  const { medicines, deleteMedicine, addMedicine } = useStore();
   const canDelete = user?.role === "admin";
+
+  /* form refs */
+  const nameRef = useRef<HTMLInputElement>(null);
+  const genericRef = useRef<HTMLInputElement>(null);
+  const companyRef = useRef<HTMLInputElement>(null);
+  const stockRef = useRef<HTMLInputElement>(null);
+  const buyRef = useRef<HTMLInputElement>(null);
+  const sellRef = useRef<HTMLInputElement>(null);
+  const batchRef = useRef<HTMLInputElement>(null);
 
   const list = useMemo(() => medicines.filter(m => {
     if (!q) return true;
@@ -26,15 +46,61 @@ export default function Inventory() {
   const lowStock = medicines.filter(m => m.stock <= m.lowStockAt).length;
   const expiringSoon = medicines.filter(m => m.expiry - Date.now() < 60 * 86400_000).length;
 
-  const deleteMedicine = (id: number, name: string) => {
-    const ok = window.confirm(`Delete medicine "${name}" from inventory? This demo action removes the SKU from the current app session.`);
-    if (!ok) return;
-    setMedicines(current => current.filter(m => m.id !== id));
-    toast({ title: "Medicine deleted", description: `${name} was removed from inventory.` });
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      await deleteMedicine(deleteTarget.id);
+      toast({ title: "Medicine deleted", description: `${deleteTarget.name} was removed from inventory.` });
+    } catch {
+      toast({ title: "Delete failed", description: "Could not remove medicine. Please try again.", variant: "destructive" });
+    }
+    setDeleteTarget(null);
+  };
+
+  const handleAdd = async () => {
+    const name = nameRef.current?.value.trim() ?? "";
+    const generic = genericRef.current?.value.trim() ?? "";
+    const company = companyRef.current?.value.trim() ?? "";
+    const stock = parseInt(stockRef.current?.value ?? "0") || 0;
+    const purchasePrice = parseFloat(buyRef.current?.value ?? "0") || 0;
+    const sellingPrice = parseFloat(sellRef.current?.value ?? "0") || 0;
+    const batchNo = batchRef.current?.value.trim() || `B${Date.now().toString().slice(-4)}`;
+    if (!name || !generic) {
+      toast({ title: "Missing fields", description: "Name and generic name are required.", variant: "destructive" });
+      return;
+    }
+    try {
+      const m = await addMedicine({
+        name, generic, company, unit: "tab",
+        purchasePrice, sellingPrice, stock, lowStockAt: 25,
+        batchNo, expiry: Date.now() + 365 * 86400_000,
+        barcode: `849${Date.now().toString().slice(-9)}`,
+        sold30d: 0,
+      });
+      toast({ title: "Medicine added", description: `${m.name} added to inventory.` });
+      setAddOpen(false);
+    } catch {
+      toast({ title: "Save failed", description: "Could not add medicine. Please try again.", variant: "destructive" });
+    }
   };
 
   return (
     <PageContainer>
+      <AlertDialog open={!!deleteTarget} onOpenChange={open => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete medicine?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove <strong>{deleteTarget?.name}</strong> from the inventory. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} className="bg-rose-600 hover:bg-rose-700">Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <PageHeader
         title="Inventory"
         subtitle={`${medicines.length} medicines · ${fmtMoney(totalValue)} total value`}
@@ -44,7 +110,36 @@ export default function Inventory() {
               <Scan className="h-4 w-4"/> Scan barcode
             </Button>
             <Button variant="outline" size="sm" className="gap-1.5"><FileDown className="h-4 w-4"/> Export</Button>
-            <Button size="sm" className="gap-1.5"><Plus className="h-4 w-4"/> Add medicine</Button>
+            <Dialog open={addOpen} onOpenChange={setAddOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm" className="gap-1.5"><Plus className="h-4 w-4"/> Add medicine</Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-[520px]">
+                <DialogHeader>
+                  <DialogTitle>Add medicine to inventory</DialogTitle>
+                  <DialogDescription>Enter medicine details to add a new SKU.</DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-3 py-2">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div><Label className="text-[12px]">Brand name *</Label><Input className="mt-1" placeholder="Augmentin 625mg" ref={nameRef} /></div>
+                    <div><Label className="text-[12px]">Generic name *</Label><Input className="mt-1" placeholder="Amoxicillin/Clavulanate" ref={genericRef} /></div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div><Label className="text-[12px]">Company</Label><Input className="mt-1" placeholder="GSK" ref={companyRef} /></div>
+                    <div><Label className="text-[12px]">Initial stock</Label><Input className="mt-1" type="number" placeholder="100" ref={stockRef} /></div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div><Label className="text-[12px]">Buy price (₨)</Label><Input className="mt-1" type="number" placeholder="18" ref={buyRef} /></div>
+                    <div><Label className="text-[12px]">Sell price (₨)</Label><Input className="mt-1" type="number" placeholder="28" ref={sellRef} /></div>
+                    <div><Label className="text-[12px]">Batch No.</Label><Input className="mt-1" placeholder="B2450" ref={batchRef} /></div>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
+                  <Button onClick={handleAdd}>Add medicine</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </>
         }
       />
@@ -97,9 +192,9 @@ export default function Inventory() {
             <tbody>
               {list.map(m => {
                 const margin = ((m.sellingPrice - m.purchasePrice) / m.sellingPrice * 100).toFixed(0);
-                const lowStock = m.stock <= m.lowStockAt;
+                const isLow = m.stock <= m.lowStockAt;
                 const expDays = Math.round((m.expiry - Date.now()) / 86400_000);
-                const expiringSoon = expDays < 60;
+                const isExpiring = expDays < 60;
                 return (
                   <tr key={m.id} className="border-t border-border hover:bg-muted/30">
                     <td className="px-4 py-2.5">
@@ -109,14 +204,14 @@ export default function Inventory() {
                     <td className="px-4 py-2.5 text-muted-foreground">{m.company}</td>
                     <td className="px-4 py-2.5 text-muted-foreground">
                       <div className="font-mono text-[11.5px]">{m.batchNo}</div>
-                      <div className={`text-[11px] flex items-center gap-1 mt-0.5 ${expiringSoon ? "text-amber-600 dark:text-amber-400" : ""}`}>
-                        {expiringSoon && <Clock className="h-3 w-3"/>}
+                      <div className={`text-[11px] flex items-center gap-1 mt-0.5 ${isExpiring ? "text-amber-600 dark:text-amber-400" : ""}`}>
+                        {isExpiring && <Clock className="h-3 w-3"/>}
                         {new Date(m.expiry).toLocaleDateString()} · {expDays}d
                       </div>
                     </td>
                     <td className="px-4 py-2.5 text-right">
-                      <div className={`font-medium num ${lowStock ? "text-rose-600 dark:text-rose-400" : ""}`}>{m.stock}</div>
-                      {lowStock && <Badge variant="outline" className="border-rose-500/40 text-rose-600 dark:text-rose-400 text-[9.5px] mt-0.5 gap-0.5"><AlertTriangle className="h-2.5 w-2.5"/> low</Badge>}
+                      <div className={`font-medium num ${isLow ? "text-rose-600 dark:text-rose-400" : ""}`}>{m.stock}</div>
+                      {isLow && <Badge variant="outline" className="border-rose-500/40 text-rose-600 dark:text-rose-400 text-[9.5px] mt-0.5 gap-0.5"><AlertTriangle className="h-2.5 w-2.5"/> low</Badge>}
                     </td>
                     <td className="px-4 py-2.5 text-right num">₨ {m.purchasePrice}</td>
                     <td className="px-4 py-2.5 text-right num">₨ {m.sellingPrice}</td>
@@ -127,7 +222,7 @@ export default function Inventory() {
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-muted-foreground hover:text-rose-600"
-                          onClick={() => deleteMedicine(m.id, m.name)}
+                          onClick={() => setDeleteTarget({ id: m.id, name: m.name })}
                           aria-label={`Delete ${m.name}`}
                           data-testid={`button-delete-medicine-${m.id}`}
                         >

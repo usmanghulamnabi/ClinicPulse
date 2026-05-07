@@ -15,9 +15,10 @@ import {
   Plus, Trash2, Save, ArrowLeft, AlertTriangle, Sparkles, FlaskConical, Calculator,
   BookmarkPlus, FileText, Search,
 } from "lucide-react";
-import { PATIENTS, MEDICINES, RX_TEMPLATES } from "@/lib/demo-data";
+import { RX_TEMPLATES } from "@/lib/demo-data";
 import { PEDIATRIC_DOSES, calculatePediatricDose } from "@/lib/pediatric-doses";
 import { useToast } from "@/hooks/use-toast";
+import { useStore } from "@/lib/store";
 
 type Item = { id: string; medicineId: number | null; dose: string; frequency: string; duration: number; qty: number; notes?: string };
 
@@ -25,7 +26,8 @@ const FREQS = ["1-0-0","0-1-0","0-0-1","1-0-1","1-1-1","1-1-1-1","PRN","STAT"];
 
 export default function PrescriptionBuilder() {
   const [, setLocation] = useLocation();
-  const [patientId, setPatientId] = useState<number>(PATIENTS[0].id);
+  const { patients: PATIENTS, medicines: MEDICINES, addPrescription } = useStore();
+  const [patientId, setPatientId] = useState<number>(PATIENTS[0]?.id ?? 1);
   const [diagnosis, setDiagnosis] = useState("Type 2 Diabetes follow-up");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<Item[]>([
@@ -39,7 +41,7 @@ export default function PrescriptionBuilder() {
   const [doseAge, setDoseAge] = useState("3");
   const { toast } = useToast();
 
-  const patient = PATIENTS.find(p => p.id === patientId)!;
+  const patient = PATIENTS.find(p => p.id === patientId);
   const doseRule = PEDIATRIC_DOSES.find(d => d.id === doseDrugId) ?? PEDIATRIC_DOSES[0];
   const doseVariant = doseRule.variants.find(v => v.id === doseVariantId) ?? doseRule.variants[0];
   const doseForm = doseRule.forms.find(f => f.label === doseFormLabel) ?? doseRule.forms[0];
@@ -56,7 +58,7 @@ export default function PrescriptionBuilder() {
     for (const it of items) {
       const med = MEDICINES.find(m => m.id === it.medicineId);
       if (!med) continue;
-      for (const a of patient.allergies) {
+      for (const a of (patient?.allergies ?? [])) {
         if (med.generic.toLowerCase().includes(a.toLowerCase()) || med.name.toLowerCase().includes(a.toLowerCase())) {
           conflicts.push({ item: it, allergy: a });
         }
@@ -146,7 +148,24 @@ export default function PrescriptionBuilder() {
         actions={
           <>
             <Button variant="outline" size="sm" className="gap-1.5"><BookmarkPlus className="h-4 w-4"/> Save as template</Button>
-            <Button size="sm" className="gap-1.5" onClick={() => { toast({ title: "Prescription created", description: "Saved & ready to print." }); setLocation("/prescriptions"); }}>
+            <Button size="sm" className="gap-1.5" onClick={async () => {
+              const validItems = items.filter(it => it.medicineId !== null);
+              if (validItems.length === 0) { toast({ title: "No medicines", description: "Add at least one medicine.", variant: "destructive" }); return; }
+              try {
+                const rx = await addPrescription({
+                  patientId,
+                  doctorId: patient?.doctorId ?? 1,
+                  diagnosis,
+                  status: "active",
+                  items: validItems.map(it => ({ medicineId: it.medicineId!, dose: it.dose, frequency: it.frequency, duration: it.duration, qty: it.qty })),
+                  total,
+                });
+                toast({ title: "Prescription saved", description: `Rx #${rx.id} created for ${patient?.fullName ?? "patient"}.` });
+                setLocation("/prescriptions");
+              } catch {
+                toast({ title: "Save failed", description: "Could not save prescription. Please try again.", variant: "destructive" });
+              }
+            }}>
               <Save className="h-4 w-4"/> Save & Print
             </Button>
           </>
@@ -169,10 +188,10 @@ export default function PrescriptionBuilder() {
                   </SelectContent>
                 </Select>
                 <div className="mt-2 flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
-                  {patient.gender} · {patient.age}y · {patient.bloodGroup}
-                  {patient.allergies.length > 0 && (
+                  {patient?.gender} · {patient?.age}y · {patient?.bloodGroup}
+                  {(patient?.allergies?.length ?? 0) > 0 && (
                     <Badge variant="outline" className="border-rose-500/40 text-rose-600 dark:text-rose-400 ml-2">
-                      Allergic: {patient.allergies.join(", ")}
+                      Allergic: {patient?.allergies?.join(", ")}
                     </Badge>
                   )}
                 </div>
@@ -290,7 +309,7 @@ export default function PrescriptionBuilder() {
             <div className="flex items-center gap-2 mb-3">
               <Sparkles className="h-4 w-4 text-primary"/>
               <div className="text-[13px] font-medium">AI suggestions</div>
-              <Badge variant="outline" className="ml-auto border-primary/30 text-primary text-[10px]">Demo</Badge>
+              <Badge variant="outline" className="ml-auto border-primary/30 text-primary text-[10px]">AI</Badge>
             </div>
             <div className="space-y-2 text-[12.5px]">
               <div className="rounded-md border border-border p-2.5">

@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider, useAuth } from "@/components/AuthProvider";
+import { AppStoreProvider } from "@/lib/store";
 import { AppShell } from "@/components/AppShell";
 
 import Login from "@/pages/Login";
@@ -69,12 +70,14 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <AuthProvider>
-          <TooltipProvider>
-            <Toaster />
-            <Router hook={useHashLocation}>
-              <Gate />
-            </Router>
-          </TooltipProvider>
+          <AppStoreProvider>
+            <TooltipProvider>
+              <Toaster />
+              <Router hook={useHashLocation}>
+                <Gate />
+              </Router>
+            </TooltipProvider>
+          </AppStoreProvider>
         </AuthProvider>
       </ThemeProvider>
     </QueryClientProvider>

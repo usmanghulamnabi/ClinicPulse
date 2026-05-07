@@ -131,7 +131,7 @@ export default function Login() {
         </div>
 
         <div className="relative text-[11.5px] text-white/65">
-          ClinicPulse is a demo build. Not a substitute for medical advice.
+          ClinicPulse is a clinical management tool. Not a substitute for professional medical advice.
         </div>
       </div>
 
@@ -173,7 +173,7 @@ export default function Login() {
                   <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} className="mt-1.5" placeholder="Enter your password" data-testid="input-password" />
                 </div>
                 <div>
-                  <Label htmlFor="otp" className="text-[12px]">Two-factor code <span className="text-muted-foreground">(optional in demo)</span></Label>
+                  <Label htmlFor="otp" className="text-[12px]">Two-factor code <span className="text-muted-foreground">(if enabled)</span></Label>
                   <Input id="otp" inputMode="numeric" maxLength={6} placeholder="••••••" value={otp} onChange={e => setOtp(e.target.value)} className="mt-1.5 tracking-[0.3em] font-mono" data-testid="input-otp" />
                 </div>
                 <Button type="submit" className="w-full" disabled={loading} data-testid="button-submit-signin">

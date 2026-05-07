@@ -1,5 +1,5 @@
 import { createContext, useContext, useState } from "react";
-import { USERS, type Role } from "@/lib/demo-data";
+import { USERS, type Role } from "@/lib/seed-data";
 import { apiRequest } from "@/lib/queryClient";
 
 export type AuthUser = {

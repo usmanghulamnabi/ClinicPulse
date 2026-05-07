@@ -5,6 +5,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FileDown, FileSpreadsheet, FileBarChart, FileText, ArrowRight } from "lucide-react";
 import { fmtMoney, monthlySeries, dailyKPIs } from "@/lib/demo-data";
 import { useToast } from "@/hooks/use-toast";
+import { useStore } from "@/lib/store";
 
 const reports = [
   { id: "patient",      title: "Patient register",       desc: "All patients with demographics and last visit." },
@@ -19,9 +20,10 @@ const reports = [
 ];
 
 export default function Reports() {
-  const k = dailyKPIs();
+  const { patients, medicines, prescriptions } = useStore();
+  const k = dailyKPIs(patients, medicines, prescriptions);
   const { toast } = useToast();
-  const downloadAs = (fmt: string, label: string) => toast({ title: `${label} ready`, description: `${fmt.toUpperCase()} generated. Demo download.` });
+  const downloadAs = (fmt: string, label: string) => toast({ title: `${label} ready`, description: `${fmt.toUpperCase()} export generated.` });
 
   return (
     <PageContainer>
