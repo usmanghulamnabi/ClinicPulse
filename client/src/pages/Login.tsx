@@ -1,0 +1,338 @@
+import { useState } from "react";
+import { useLocation } from "wouter";
+import { Logo } from "@/components/Logo";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { useAuth } from "@/components/AuthProvider";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
+import { ShieldCheck, Activity, Stethoscope, BadgeCheck, Sparkles, KeyRound, MailCheck } from "lucide-react";
+import { motion } from "framer-motion";
+
+const QUICK_LOGIN: { role: "admin" | "doctor" | "receptionist" | "pharmacist"; email: string; label: string }[] = [
+  { role: "admin", email: "admin@clinicpulse.app", label: "Clinic Admin" },
+  { role: "doctor", email: "doctor@clinicpulse.app", label: "Doctor" },
+  { role: "receptionist", email: "front@clinicpulse.app", label: "Receptionist" },
+  { role: "pharmacist", email: "pharm@clinicpulse.app", label: "Pharmacist" },
+];
+
+export default function Login() {
+  const { login } = useAuth();
+  const [, setLocation] = useLocation();
+  const [email, setEmail] = useState("admin@clinicpulse.app");
+  const [password, setPassword] = useState("demo1234");
+  const [otp, setOtp] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState("signin");
+  const [resetEmail, setResetEmail] = useState("admin@clinicpulse.app");
+  const [resetCode, setResetCode] = useState("");
+  const [demoCode, setDemoCode] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [resetStep, setResetStep] = useState<"request" | "verify">("request");
+  const [resetLoading, setResetLoading] = useState(false);
+  const { toast } = useToast();
+
+  const handleLogin = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    setLoading(true);
+    const r = await login(email, password);
+    setLoading(false);
+    if (!r.ok) { toast({ title: "Sign-in failed", description: r.error, variant: "destructive" }); return; }
+    setLocation("/");
+  };
+
+  const quick = async (mail: string) => {
+    setEmail(mail);
+    setLoading(true);
+    const r = await login(mail, "demo1234");
+    setLoading(false);
+    if (r.ok) setLocation("/");
+  };
+
+  const requestReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetLoading(true);
+    try {
+      const res = await apiRequest("POST", "/api/auth/password/request", { email: resetEmail });
+      const data = await res.json();
+      setDemoCode(data.demoCode ?? "");
+      setResetStep("verify");
+      toast({
+        title: "Reset code sent",
+        description: data.demoCode ? `Demo code: ${data.demoCode}` : "Check the account email for reset instructions.",
+      });
+    } catch (error) {
+      toast({
+        title: "Unable to request reset",
+        description: error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+  const completeReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPassword !== confirmPassword) {
+      toast({ title: "Passwords do not match", description: "Re-enter the same password in both fields.", variant: "destructive" });
+      return;
+    }
+    setResetLoading(true);
+    try {
+      await apiRequest("POST", "/api/auth/password/reset", { email: resetEmail, code: resetCode, newPassword });
+      setEmail(resetEmail);
+      setPassword(newPassword);
+      setActiveTab("signin");
+      setResetStep("request");
+      setResetCode("");
+      setDemoCode("");
+      setNewPassword("");
+      setConfirmPassword("");
+      toast({ title: "Password reset complete", description: "You can now sign in with your new password." });
+    } catch (error) {
+      toast({
+        title: "Reset failed",
+        description: error instanceof Error ? error.message.replace(/^400:\s*/, "") : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen grid lg:grid-cols-2 bg-background">
+      {/* Left: brand panel */}
+      <div className="relative hidden lg:flex flex-col justify-between p-12 bg-gradient-to-br from-primary/95 via-primary to-[#062B30] text-white overflow-hidden">
+        <div className="absolute inset-0 opacity-25 pointer-events-none">
+          <svg className="absolute -top-12 -left-10 w-[120%] h-[80%]" viewBox="0 0 600 300" fill="none">
+            <path d="M0 150 C100 70, 200 230, 300 150 S 500 70, 600 150" stroke="white" strokeWidth="0.6" />
+            <path d="M0 170 C100 90, 200 250, 300 170 S 500 90, 600 170" stroke="white" strokeWidth="0.6" opacity=".6"/>
+            <path d="M0 130 C100 50, 200 210, 300 130 S 500 50, 600 130" stroke="white" strokeWidth="0.6" opacity=".4"/>
+          </svg>
+        </div>
+
+        <Logo className="text-white relative" taglineClassName="!text-white/70" />
+
+        <div className="relative">
+          <h1 className="text-3xl font-semibold tracking-tight max-w-md leading-tight">
+            The operating system for <span className="opacity-80">modern clinics.</span>
+          </h1>
+          <p className="mt-3 text-white/80 text-[14px] max-w-md">
+            Appointments, prescriptions, EMR, inventory, billing, and analytics — built for multi-branch
+            practices that care about feel as much as they care about throughput.
+          </p>
+
+          <div className="mt-8 grid grid-cols-2 gap-3 max-w-md">
+            {[
+              { icon: Stethoscope, t: "Smart prescriptions", s: "Templates, allergy alerts, dose calc." },
+              { icon: ShieldCheck, t: "RBAC & 2FA",          s: "Doctor, receptionist, pharmacist isolation." },
+              { icon: Activity,    t: "Live analytics",      s: "Revenue, profit, disease trends." },
+              { icon: BadgeCheck,  t: "Multi-branch",        s: "Per-branch inventory & dashboards." },
+            ].map((f, i) => (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.1 + i * 0.06 }}
+                className="rounded-lg bg-white/10 border border-white/15 p-3 backdrop-blur-sm"
+              >
+                <f.icon className="h-4 w-4" />
+                <div className="mt-2 text-[13px] font-medium">{f.t}</div>
+                <div className="text-[11.5px] text-white/70">{f.s}</div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+
+        <div className="relative text-[11.5px] text-white/65">
+          ClinicPulse is a demo build. Not a substitute for medical advice.
+        </div>
+      </div>
+
+      {/* Right: auth form */}
+      <div className="flex items-center justify-center p-6 md:p-10">
+        <div className="w-full max-w-[420px]">
+          <div className="lg:hidden mb-8"><Logo /></div>
+
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="grid grid-cols-3 mb-6">
+              <TabsTrigger value="signin" data-testid="tab-signin">Sign in</TabsTrigger>
+              <TabsTrigger value="signup" data-testid="tab-signup">Create account</TabsTrigger>
+              <TabsTrigger value="reset" data-testid="tab-reset">Reset</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="signin">
+              <h2 className="text-xl font-semibold tracking-tight">Welcome back</h2>
+              <p className="text-[13px] text-muted-foreground mt-1">
+                Sign in to continue to your clinic workspace.
+              </p>
+
+              <form className="mt-6 space-y-4" onSubmit={handleLogin}>
+                <div>
+                  <Label htmlFor="email" className="text-[12px]">Email</Label>
+                  <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} className="mt-1.5" data-testid="input-email" />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="password" className="text-[12px]">Password</Label>
+                    <button
+                      type="button"
+                      className="text-[11.5px] text-primary hover:underline"
+                      onClick={() => { setResetEmail(email); setActiveTab("reset"); }}
+                      data-testid="button-forgot-password"
+                    >
+                      Forgot?
+                    </button>
+                  </div>
+                  <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} className="mt-1.5" data-testid="input-password" />
+                </div>
+                <div>
+                  <Label htmlFor="otp" className="text-[12px]">Two-factor code <span className="text-muted-foreground">(optional in demo)</span></Label>
+                  <Input id="otp" inputMode="numeric" maxLength={6} placeholder="••••••" value={otp} onChange={e => setOtp(e.target.value)} className="mt-1.5 tracking-[0.3em] font-mono" data-testid="input-otp" />
+                </div>
+                <Button type="submit" className="w-full" disabled={loading} data-testid="button-submit-signin">
+                  {loading ? "Signing in…" : "Sign in"}
+                </Button>
+              </form>
+
+              <div className="mt-6">
+                <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground mb-2">Quick demo sign-in</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {QUICK_LOGIN.map(q => (
+                    <button
+                      key={q.role}
+                      onClick={() => quick(q.email)}
+                      className="text-left rounded-md border border-border p-2.5 hover-elevate"
+                      data-testid={`quick-${q.role}`}
+                    >
+                      <div className="text-[12.5px] font-medium">{q.label}</div>
+                      <div className="text-[11px] text-muted-foreground truncate">{q.email}</div>
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-3 text-[11px] text-muted-foreground flex items-center gap-1.5">
+                  <Sparkles className="h-3 w-3" /> Password for all demo accounts: <code className="font-mono text-[11px]">demo1234</code>
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="signup">
+              <h2 className="text-xl font-semibold tracking-tight">Start your clinic on ClinicPulse</h2>
+              <p className="text-[13px] text-muted-foreground mt-1">
+                Free 14-day Pro trial. No card required.
+              </p>
+              <form className="mt-6 space-y-4" onSubmit={(e) => { e.preventDefault(); toast({ title: "Account created", description: "Welcome to ClinicPulse — redirecting…" }); setTimeout(() => setLocation("/"), 800); }}>
+                <div className="grid grid-cols-2 gap-3">
+                  <div><Label className="text-[12px]">First name</Label><Input className="mt-1.5" placeholder="Sara" /></div>
+                  <div><Label className="text-[12px]">Last name</Label><Input className="mt-1.5" placeholder="Khan" /></div>
+                </div>
+                <div><Label className="text-[12px]">Clinic name</Label><Input className="mt-1.5" placeholder="ClinicPulse Health" /></div>
+                <div><Label className="text-[12px]">Work email</Label><Input className="mt-1.5" type="email" placeholder="you@clinic.com" /></div>
+                <div><Label className="text-[12px]">Password</Label><Input className="mt-1.5" type="password" /></div>
+                <Button type="submit" className="w-full">Create workspace</Button>
+              </form>
+            </TabsContent>
+
+            <TabsContent value="reset">
+              <div className="flex items-start gap-3">
+                <div className="h-9 w-9 rounded-lg bg-primary/10 grid place-items-center text-primary">
+                  <KeyRound className="h-4 w-4" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-semibold tracking-tight">Reset password</h2>
+                  <p className="text-[13px] text-muted-foreground mt-1">
+                    Request a secure code, verify it, then create a new password.
+                  </p>
+                </div>
+              </div>
+
+              {resetStep === "request" ? (
+                <form className="mt-6 space-y-4" onSubmit={requestReset}>
+                  <div>
+                    <Label htmlFor="reset-email" className="text-[12px]">Account email</Label>
+                    <Input
+                      id="reset-email"
+                      type="email"
+                      value={resetEmail}
+                      onChange={e => setResetEmail(e.target.value)}
+                      className="mt-1.5"
+                      data-testid="input-reset-email"
+                    />
+                  </div>
+                  <div className="rounded-lg border border-border bg-muted/40 p-3 text-[12px] text-muted-foreground">
+                    Production mode should email a one-time token and store only a hashed token with expiry. The demo shows the code so you can test the flow locally.
+                  </div>
+                  <Button type="submit" className="w-full" disabled={resetLoading} data-testid="button-request-reset">
+                    {resetLoading ? "Sending code…" : "Send reset code"}
+                  </Button>
+                </form>
+              ) : (
+                <form className="mt-6 space-y-4" onSubmit={completeReset}>
+                  <div className="rounded-lg border border-primary/20 bg-primary/10 p-3 text-[12px] text-primary flex gap-2">
+                    <MailCheck className="h-4 w-4 shrink-0 mt-0.5" />
+                    <div>
+                      Code sent to <span className="font-medium">{resetEmail}</span>.
+                      {demoCode && <> Demo code: <code className="font-mono font-semibold">{demoCode}</code></>}
+                    </div>
+                  </div>
+                  <div>
+                    <Label htmlFor="reset-code" className="text-[12px]">Reset code</Label>
+                    <Input
+                      id="reset-code"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={resetCode}
+                      onChange={e => setResetCode(e.target.value)}
+                      className="mt-1.5 tracking-[0.3em] font-mono"
+                      placeholder="000000"
+                      data-testid="input-reset-code"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="new-password" className="text-[12px]">New password</Label>
+                    <Input
+                      id="new-password"
+                      type="password"
+                      value={newPassword}
+                      onChange={e => setNewPassword(e.target.value)}
+                      className="mt-1.5"
+                      placeholder="At least 8 characters"
+                      data-testid="input-new-password"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="confirm-password" className="text-[12px]">Confirm password</Label>
+                    <Input
+                      id="confirm-password"
+                      type="password"
+                      value={confirmPassword}
+                      onChange={e => setConfirmPassword(e.target.value)}
+                      className="mt-1.5"
+                      data-testid="input-confirm-password"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <Button type="button" variant="outline" className="flex-1" onClick={() => setResetStep("request")} data-testid="button-change-reset-email">
+                      Change email
+                    </Button>
+                    <Button type="submit" className="flex-1" disabled={resetLoading} data-testid="button-complete-reset">
+                      {resetLoading ? "Updating…" : "Update password"}
+                    </Button>
+                  </div>
+                </form>
+              )}
+            </TabsContent>
+          </Tabs>
+
+          <p className="mt-8 text-center text-[11px] text-muted-foreground">
+            By continuing you agree to our Terms and Privacy Policy.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,274 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ClinicPulse — calm medical teal/cyan/slate */
+:root {
+  --button-outline: rgba(0, 0, 0, 0.1);
+  --badge-outline: rgba(0, 0, 0, 0.05);
+  --opaque-button-border-intensity: -8;
+  --elevate-1: rgba(15, 80, 100, 0.04);
+  --elevate-2: rgba(15, 80, 100, 0.09);
+
+  --background: 210 33% 98%;
+  --foreground: 215 30% 12%;
+  --border: 215 20% 90%;
+  --card: 0 0% 100%;
+  --card-foreground: 215 30% 12%;
+  --card-border: 215 20% 92%;
+
+  --sidebar: 215 35% 97%;
+  --sidebar-foreground: 215 30% 18%;
+  --sidebar-border: 215 22% 90%;
+  --sidebar-primary: 184 76% 32%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 184 50% 92%;
+  --sidebar-accent-foreground: 184 78% 22%;
+  --sidebar-ring: 184 76% 32%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 215 30% 12%;
+  --popover-border: 215 20% 90%;
+
+  --primary: 184 76% 32%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 215 25% 95%;
+  --secondary-foreground: 215 30% 18%;
+  --muted: 215 22% 95%;
+  --muted-foreground: 215 14% 42%;
+  --accent: 184 60% 94%;
+  --accent-foreground: 184 78% 22%;
+  --destructive: 350 72% 48%;
+  --destructive-foreground: 0 0% 100%;
+  --input: 215 18% 86%;
+  --ring: 184 76% 36%;
+
+  /* Chart palette — clinical, cool */
+  --chart-1: 184 76% 36%; /* teal */
+  --chart-2: 198 76% 48%; /* cyan */
+  --chart-3: 162 60% 38%; /* mint */
+  --chart-4: 215 65% 52%; /* blue */
+  --chart-5: 30 90% 55%;  /* warm accent for alerts */
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius: 0.625rem;
+
+  --shadow-2xs: 0 1px 0 0 hsl(215 30% 12% / 0.02);
+  --shadow-xs: 0 1px 2px 0 hsl(215 30% 12% / 0.03);
+  --shadow-sm: 0 2px 4px -1px hsl(215 30% 12% / 0.05);
+  --shadow: 0 4px 12px -2px hsl(215 30% 12% / 0.06), 0 2px 4px -1px hsl(215 30% 12% / 0.04);
+  --shadow-md: 0 8px 20px -4px hsl(215 30% 12% / 0.08);
+  --shadow-lg: 0 16px 32px -8px hsl(215 30% 12% / 0.10);
+  --shadow-xl: 0 24px 48px -12px hsl(215 30% 12% / 0.14);
+  --shadow-2xl: 0 32px 64px -16px hsl(215 30% 12% / 0.18);
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+
+  --sidebar-primary-border: hsl(var(--sidebar-primary));
+  --sidebar-primary-border: hsl(from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --sidebar-accent-border: hsl(var(--sidebar-accent));
+  --sidebar-accent-border: hsl(from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --primary-border: hsl(var(--primary));
+  --primary-border: hsl(from hsl(var(--primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --secondary-border: hsl(var(--secondary));
+  --secondary-border: hsl(from hsl(var(--secondary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --muted-border: hsl(var(--muted));
+  --muted-border: hsl(from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --accent-border: hsl(var(--accent));
+  --accent-border: hsl(from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --destructive-border: hsl(var(--destructive));
+  --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+}
+
+.dark {
+  --button-outline: rgba(255, 255, 255, 0.1);
+  --badge-outline: rgba(255, 255, 255, 0.05);
+  --opaque-button-border-intensity: 9;
+  --elevate-1: rgba(255, 255, 255, 0.04);
+  --elevate-2: rgba(255, 255, 255, 0.09);
+
+  --background: 215 32% 7%;
+  --foreground: 210 25% 96%;
+  --border: 215 20% 16%;
+  --card: 215 30% 9%;
+  --card-foreground: 210 25% 96%;
+  --card-border: 215 22% 14%;
+
+  --sidebar: 215 32% 8%;
+  --sidebar-foreground: 210 22% 92%;
+  --sidebar-border: 215 22% 14%;
+  --sidebar-primary: 184 70% 48%;
+  --sidebar-primary-foreground: 215 32% 7%;
+  --sidebar-accent: 215 22% 14%;
+  --sidebar-accent-foreground: 184 70% 70%;
+  --sidebar-ring: 184 70% 48%;
+
+  --popover: 215 30% 10%;
+  --popover-foreground: 210 25% 96%;
+  --popover-border: 215 22% 14%;
+  --primary: 184 70% 46%;
+  --primary-foreground: 215 32% 7%;
+  --secondary: 215 22% 14%;
+  --secondary-foreground: 210 25% 96%;
+  --muted: 215 22% 13%;
+  --muted-foreground: 215 12% 64%;
+  --accent: 184 38% 18%;
+  --accent-foreground: 184 70% 78%;
+  --destructive: 350 72% 56%;
+  --destructive-foreground: 0 0% 100%;
+  --input: 215 18% 22%;
+  --ring: 184 70% 50%;
+
+  --chart-1: 184 70% 52%;
+  --chart-2: 198 80% 62%;
+  --chart-3: 162 60% 52%;
+  --chart-4: 215 70% 64%;
+  --chart-5: 30 90% 62%;
+
+  --shadow-2xs: 0 1px 0 0 hsl(0 0% 0% / 0.4);
+  --shadow-xs: 0 1px 2px 0 hsl(0 0% 0% / 0.5);
+  --shadow-sm: 0 2px 4px -1px hsl(0 0% 0% / 0.5);
+  --shadow: 0 4px 12px -2px hsl(0 0% 0% / 0.55);
+  --shadow-md: 0 8px 20px -4px hsl(0 0% 0% / 0.6);
+  --shadow-lg: 0 16px 32px -8px hsl(0 0% 0% / 0.65);
+  --shadow-xl: 0 24px 48px -12px hsl(0 0% 0% / 0.7);
+  --shadow-2xl: 0 32px 64px -16px hsl(0 0% 0% / 0.75);
+
+  --sidebar-primary-border: hsl(var(--sidebar-primary));
+  --sidebar-primary-border: hsl(from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --sidebar-accent-border: hsl(var(--sidebar-accent));
+  --sidebar-accent-border: hsl(from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --primary-border: hsl(var(--primary));
+  --primary-border: hsl(from hsl(var(--primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --secondary-border: hsl(var(--secondary));
+  --secondary-border: hsl(from hsl(var(--secondary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --muted-border: hsl(var(--muted));
+  --muted-border: hsl(from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --accent-border: hsl(var(--accent));
+  --accent-border: hsl(from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --destructive-border: hsl(var(--destructive));
+  --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply font-sans antialiased bg-background text-foreground;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    background:
+      radial-gradient(circle at 15% -10%, hsl(var(--primary) / 0.13), transparent 30rem),
+      radial-gradient(circle at 90% 8%, hsl(var(--chart-2) / 0.10), transparent 24rem),
+      hsl(var(--background));
+  }
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  /* Tabular numerals for KPIs/tables */
+  .tabular-nums { font-variant-numeric: tabular-nums; }
+  .num { font-variant-numeric: tabular-nums lining-nums; }
+}
+
+/* Glassmorphism utility */
+@layer utilities {
+  .glass {
+    background: hsl(var(--card) / 0.6);
+    backdrop-filter: saturate(180%) blur(14px);
+    -webkit-backdrop-filter: saturate(180%) blur(14px);
+    border: 1px solid hsl(var(--card-border));
+  }
+  .glass-strong {
+    background: hsl(var(--card) / 0.8);
+    backdrop-filter: saturate(200%) blur(20px);
+    -webkit-backdrop-filter: saturate(200%) blur(20px);
+    border: 1px solid hsl(var(--card-border));
+  }
+  .premium-card {
+    border: 1px solid hsl(var(--card-border));
+    background:
+      linear-gradient(180deg, hsl(var(--card) / 0.88), hsl(var(--card) / 0.72)),
+      radial-gradient(circle at top left, hsl(var(--primary) / 0.10), transparent 18rem);
+    box-shadow: var(--shadow-md);
+    backdrop-filter: blur(18px) saturate(160%);
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
+  }
+  .metric-grid {
+    background-image:
+      linear-gradient(hsl(var(--border) / 0.35) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border) / 0.35) 1px, transparent 1px);
+    background-size: 32px 32px;
+    mask-image: linear-gradient(to bottom, black, transparent 85%);
+  }
+  .ring-pulse {
+    box-shadow: 0 0 0 0 hsl(var(--primary) / 0.5);
+    animation: ringPulse 2.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+  @keyframes ringPulse {
+    0%, 100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.45); }
+    50% { box-shadow: 0 0 0 10px hsl(var(--primary) / 0); }
+  }
+
+  input[type='search']::-webkit-search-cancel-button { @apply hidden; }
+  [contenteditable][data-placeholder]:empty::before {
+    content: attr(data-placeholder);
+    color: hsl(var(--muted-foreground));
+    pointer-events: none;
+  }
+  .no-default-hover-elevate {}
+  .no-default-active-elevate {}
+
+  .toggle-elevate::before,
+  .toggle-elevate-2::before {
+    content: '';
+    pointer-events: none;
+    position: absolute;
+    inset: 0px;
+    border-radius: inherit;
+    z-index: -1;
+  }
+  .toggle-elevate.toggle-elevated::before { background-color: var(--elevate-2); }
+  .border.toggle-elevate::before { inset: -1px; }
+
+  .hover-elevate:not(.no-default-hover-elevate),
+  .active-elevate:not(.no-default-active-elevate),
+  .hover-elevate-2:not(.no-default-hover-elevate),
+  .active-elevate-2:not(.no-default-active-elevate) {
+    position: relative;
+    z-index: 0;
+  }
+
+  .hover-elevate:not(.no-default-hover-elevate)::after,
+  .active-elevate:not(.no-default-active-elevate)::after,
+  .hover-elevate-2:not(.no-default-hover-elevate)::after,
+  .active-elevate-2:not(.no-default-active-elevate)::after {
+    content: '';
+    pointer-events: none;
+    position: absolute;
+    inset: 0px;
+    border-radius: inherit;
+    z-index: 999;
+  }
+  .hover-elevate:hover:not(.no-default-hover-elevate)::after,
+  .active-elevate:active:not(.no-default-active-elevate)::after { background-color: var(--elevate-1); }
+  .hover-elevate-2:hover:not(.no-default-hover-elevate)::after,
+  .active-elevate-2:active:not(.no-default-active-elevate)::after { background-color: var(--elevate-2); }
+  .border.hover-elevate:not(.no-hover-interaction-elevate)::after,
+  .border.active-elevate:not(.no-active-interaction-elevate)::after,
+  .border.hover-elevate-2:not(.no-hover-interaction-elevate)::after,
+  .border.active-elevate-2:not(.no-active-interaction-elevate)::after,
+  .border.hover-elevate:not(.no-hover-interaction-elevate)::after { inset: -1px; }
+}
+
+/* Print styles for prescription PDF */
+@media print {
+  body { background: #fff !important; color: #000 !important; }
+  .no-print { display: none !important; }
+  .print-page {
+    width: 210mm; min-height: 297mm; padding: 18mm 16mm;
+    background: #fff; color: #000;
+  }
+}
