@@ -28,9 +28,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, "..");
 
 let handler;
+let testables;
 try {
   const mod = await import(join(projectRoot, "api/index.js"));
   handler = mod.default;
+  testables = mod.__testables;
 } catch (e) {
   console.error("❌  Cannot import api/index.js:", e.message);
   process.exit(1);
@@ -83,6 +85,69 @@ function assert(name, condition, detail = "") {
 
 function section(title) {
   console.log(`\n── ${title} ${"─".repeat(Math.max(0, 56 - title.length))}`);
+}
+
+/* ── Pure tablet-calculator unit tests (always run, no DB needed) ──────── */
+section("Tablet calculator (pure functions, no DB)");
+if (testables) {
+  const { calcDosesPerDay, calcTabletsPerDose, calcDurationDays, calcTabletsForItem } = testables;
+  // Frequency parsing
+  assert("BD = 2/day", calcDosesPerDay("BD") === 2);
+  assert("BID = 2/day", calcDosesPerDay("BID") === 2);
+  assert("OD = 1/day", calcDosesPerDay("OD") === 1);
+  assert("TDS = 3/day", calcDosesPerDay("TDS") === 3);
+  assert("TID = 3/day", calcDosesPerDay("TID") === 3);
+  assert("QID = 4/day", calcDosesPerDay("QID") === 4);
+  assert("HS = 1/day", calcDosesPerDay("HS") === 1);
+  assert("PRN = 0", calcDosesPerDay("PRN") === 0);
+  assert("SOS = 0", calcDosesPerDay("SOS") === 0);
+  assert("Q8H = 3/day", calcDosesPerDay("Q8H") === 3);
+  assert("1-0-1 = 2/day", calcDosesPerDay("1-0-1") === 2);
+  assert("1-1-1 = 3/day", calcDosesPerDay("1-1-1") === 3);
+
+  // Dose parsing
+  assert("'1 tablet' = 1", calcTabletsPerDose("1 tablet", "tab") === 1);
+  assert("'2 tablets' = 2", calcTabletsPerDose("2 tablets", "tab") === 2);
+  assert("'1/2 tablet' = 0.5", calcTabletsPerDose("1/2 tablet", "tab") === 0.5);
+  assert("'0.5 tab' = 0.5", calcTabletsPerDose("0.5 tab", "tab") === 0.5);
+  assert("'5 ml' → 0 (not tablet)", calcTabletsPerDose("5 ml", "ml") === 0);
+  assert("'500mg' on tablet unit defaults to 1", calcTabletsPerDose("500mg", "tab") === 1);
+  assert("'500mg' on syrup unit → 0", calcTabletsPerDose("500mg", "ml") === 0);
+
+  // Duration parsing
+  assert("5 (number) = 5 days", calcDurationDays({ duration: 5 }) === 5);
+  assert("'5 days' = 5", calcDurationDays({ duration: "5 days" }) === 5);
+  assert("'1 week' = 7", calcDurationDays({ duration: "1 week" }) === 7);
+  assert("'2 wks' = 14", calcDurationDays({ duration: "2 wks" }) === 14);
+  assert("'1 month' = 30", calcDurationDays({ duration: "1 month" }) === 30);
+
+  // End-to-end: 1 tablet BD for 5 days = 10 tablets
+  assert(
+    "1 tablet BD x 5d = 10",
+    calcTabletsForItem({ dose: "1 tablet", frequency: "BD", duration: 5 }, "tab") === 10
+  );
+  // 1 tablet TDS x 7 days = 21
+  assert(
+    "1 tablet TDS x 7d = 21",
+    calcTabletsForItem({ dose: "1 tablet", frequency: "TDS", duration: 7 }, "tab") === 21
+  );
+  // 1/2 tablet BD x 10 days = 10
+  assert(
+    "1/2 tablet BD x 10d = 10",
+    calcTabletsForItem({ dose: "1/2 tablet", frequency: "BD", duration: 10 }, "tab") === 10
+  );
+  // 1-0-1 numeric format (no dose text) on tablet unit = 2/day x 5 = 10
+  assert(
+    "'500mg' 1-0-1 5d = 10",
+    calcTabletsForItem({ dose: "500mg", frequency: "1-0-1", duration: 5 }, "tab") === 10
+  );
+  // Inhaler/non-tablet should be 0
+  assert(
+    "100mcg PRN 30d on inhaler = 0",
+    calcTabletsForItem({ dose: "100mcg", frequency: "PRN", duration: 30 }, "unit") === 0
+  );
+} else {
+  assert("__testables exported from api/index.js", false, "export missing");
 }
 
 const dbAvailable = !!process.env.POSTGRES_URL;
@@ -267,28 +332,136 @@ if (!dbAvailable) {
     assert("Status updated", patch.body?.prescription?.status === "completed");
   }
 
-  section("Medicines CRUD");
+  section("Medicines CRUD + tablets-per-pack economics");
   {
     const list = await call("GET", "/api/medicines", {});
     assert("List returns 200", list.status === 200);
+    // First medicine should expose new tablet fields after schema migration
+    const sample = list.body?.medicines?.[0];
+    assert("GET medicine includes tabletsPerPack", typeof sample?.tabletsPerPack === "number");
+    assert("GET medicine includes tabletsSold", typeof sample?.tabletsSold === "number");
+    assert("GET medicine includes profit", typeof sample?.profit === "number");
+    assert("GET medicine includes revenue", typeof sample?.revenue === "number");
 
     const create = await call("POST", "/api/medicines", {
       name: "Smoke Med", generic: "smoke", company: "TestCo", unit: "tab",
-      purchasePrice: 5, sellingPrice: 10, stock: 100, lowStockAt: 20,
+      costPerPack: 50, salePricePerPack: 100, stock: 100, lowStockAt: 20,
+      tabletsPerPack: 10,
       batchNo: "BSMOKE", expiry: Date.now() + 365*86400000,
       barcode: "849000099999", sold30d: 0,
     });
     assert("Create returns 201", create.status === 201);
+    assert("Create echoes tabletsPerPack", create.body?.medicine?.tabletsPerPack === 10);
+    assert("Create echoes salePricePerPack", Number(create.body?.medicine?.salePricePerPack) === 100);
     const mid = create.body?.medicine?.id;
 
     if (mid) {
-      const patch = await call("PATCH", `/api/medicines/${mid}`, { stock: 99 });
-      assert("Patch stock returns 200", patch.status === 200);
-      assert("Stock updated", patch.body?.medicine?.stock === 99);
+      // PATCH legacy field name
+      const patch1 = await call("PATCH", `/api/medicines/${mid}`, { stock: 99 });
+      assert("PATCH stock returns 200", patch1.status === 200);
+      assert("Stock updated", patch1.body?.medicine?.stock === 99);
+
+      // PATCH new tablet/pack fields and price
+      const patch2 = await call("PATCH", `/api/medicines/${mid}`, {
+        tabletsPerPack: 20,
+        costPerPack: 80,
+        salePricePerPack: 200,
+      });
+      assert("PATCH tabletsPerPack returns 200", patch2.status === 200);
+      assert("tabletsPerPack updated to 20", patch2.body?.medicine?.tabletsPerPack === 20);
+      assert("costPerPack updated", Number(patch2.body?.medicine?.costPerPack) === 80);
+      assert("salePricePerPack updated", Number(patch2.body?.medicine?.salePricePerPack) === 200);
+      assert("pricePerTablet derived = 10", Number(patch2.body?.medicine?.pricePerTablet) === 10);
 
       const del = await call("DELETE", `/api/medicines/${mid}`, {}, { authorization: `Bearer ${adminToken}` });
       assert("Delete returns 200", del.status === 200);
     }
+  }
+
+  section("Prescription tablets sold + profit calculation");
+  if (patientId) {
+    // Create a fresh medicine with predictable economics so we can assert exactly
+    const medCreate = await call("POST", "/api/medicines", {
+      name: "Tablet Calc Med", generic: "calc", company: "TestCo", unit: "tab",
+      costPerPack: 50, salePricePerPack: 150, stock: 50, lowStockAt: 5,
+      tabletsPerPack: 10, sold30d: 0,
+      batchNo: "BCALC", expiry: Date.now() + 365*86400000,
+      barcode: `849${Date.now().toString().slice(-9)}`,
+    });
+    assert("Create calc medicine returns 201", medCreate.status === 201);
+    const calcMedId = medCreate.body?.medicine?.id;
+    const medBefore = medCreate.body?.medicine;
+    assert("Initial tabletsSold is 0", medBefore?.tabletsSold === 0);
+    assert("Initial profit is 0", Number(medBefore?.profit) === 0);
+
+    // Create a prescription: 1 tablet BD for 5 days → 10 tablets
+    const rx = await call("POST", "/api/prescriptions", {
+      patientId,
+      doctorId: 2,
+      diagnosis: "Smoke tablet calc",
+      status: "active",
+      items: [{ medicineId: calcMedId, dose: "1 tablet", frequency: "BD", duration: 5, qty: 10 }],
+      total: 150,
+    });
+    assert("Create Rx returns 201", rx.status === 201);
+    const rxId = rx.body?.prescription?.id;
+
+    const medAfter = await call("GET", "/api/medicines", {});
+    const m1 = medAfter.body?.medicines?.find(x => x.id === calcMedId);
+    assert("After Rx: tabletsSold = 10", m1?.tabletsSold === 10, `got ${m1?.tabletsSold}`);
+    // Expected profit = 10 * (150-50)/10 = 100
+    assert("After Rx: profit = 100", Math.round(Number(m1?.profit)) === 100, `got ${m1?.profit}`);
+    // Expected revenue = 10 * (150/10) = 150
+    assert("After Rx: revenue = 150", Math.round(Number(m1?.revenue)) === 150, `got ${m1?.revenue}`);
+    // Stock should still be 49 (10 tablets used, 1 pack of 10 fully consumed)
+    assert("After Rx: stock decremented by 1 pack", m1?.stock === 49, `got ${m1?.stock}`);
+
+    // Multi-line: 1 tablet TDS for 7 days = 21 tablets on a second medicine
+    const med2 = await call("POST", "/api/medicines", {
+      name: "Calc Med 2", generic: "calc2", company: "TestCo", unit: "tab",
+      costPerPack: 100, salePricePerPack: 200, stock: 30, lowStockAt: 5,
+      tabletsPerPack: 10, sold30d: 0,
+      batchNo: "BCALC2", expiry: Date.now() + 365*86400000,
+      barcode: `849${(Date.now()+1).toString().slice(-9)}`,
+    });
+    const calcMed2Id = med2.body?.medicine?.id;
+    const rx2 = await call("POST", "/api/prescriptions", {
+      patientId,
+      doctorId: 2,
+      diagnosis: "Multi-line",
+      status: "active",
+      items: [
+        { medicineId: calcMedId, dose: "1 tablet", frequency: "OD", duration: 7, qty: 7 },
+        { medicineId: calcMed2Id, dose: "1 tablet", frequency: "TDS", duration: 7, qty: 21 },
+      ],
+      total: 0,
+    });
+    assert("Create multi-line Rx returns 201", rx2.status === 201);
+    const rx2Id = rx2.body?.prescription?.id;
+
+    const after2 = await call("GET", "/api/medicines", {});
+    const m1b = after2.body?.medicines?.find(x => x.id === calcMedId);
+    const m2b = after2.body?.medicines?.find(x => x.id === calcMed2Id);
+    assert("Med1 tabletsSold cumulative = 17", m1b?.tabletsSold === 17, `got ${m1b?.tabletsSold}`);
+    assert("Med2 tabletsSold = 21", m2b?.tabletsSold === 21, `got ${m2b?.tabletsSold}`);
+    // Med2 profit = 21 * (200-100)/10 = 210
+    assert("Med2 profit = 210", Math.round(Number(m2b?.profit)) === 210, `got ${m2b?.profit}`);
+
+    // Reverse on delete: deleting rx2 should subtract 7 from med1 and 21 from med2
+    if (rx2Id) {
+      const del = await call("DELETE", `/api/prescriptions/${rx2Id}`, {}, { authorization: `Bearer ${adminToken}` });
+      assert("Delete Rx returns 200", del.status === 200);
+      const after3 = await call("GET", "/api/medicines", {});
+      const m1c = after3.body?.medicines?.find(x => x.id === calcMedId);
+      const m2c = after3.body?.medicines?.find(x => x.id === calcMed2Id);
+      assert("Med1 tabletsSold after delete = 10", m1c?.tabletsSold === 10, `got ${m1c?.tabletsSold}`);
+      assert("Med2 tabletsSold after delete = 0", m2c?.tabletsSold === 0, `got ${m2c?.tabletsSold}`);
+    }
+
+    // Cleanup
+    if (rxId) await call("DELETE", `/api/prescriptions/${rxId}`, {}, { authorization: `Bearer ${adminToken}` });
+    if (calcMedId) await call("DELETE", `/api/medicines/${calcMedId}`, {}, { authorization: `Bearer ${adminToken}` });
+    if (calcMed2Id) await call("DELETE", `/api/medicines/${calcMed2Id}`, {}, { authorization: `Bearer ${adminToken}` });
   }
 
   section("Doctors CRUD with linked user account");
