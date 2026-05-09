@@ -47,8 +47,23 @@ export type Medicine = {
   generic: string;
   company: string;
   unit: string;
+  /** Pack-level cost (existing column purchase_price). */
   purchasePrice: number;
+  /** Pack-level sale price (existing column selling_price). */
   sellingPrice: number;
+  /** Friendly aliases mirroring purchasePrice/sellingPrice (returned by API). */
+  costPerPack?: number;
+  salePricePerPack?: number;
+  /** Per-tablet derived prices (from API). */
+  pricePerTablet?: number;
+  costPerTablet?: number;
+  /** Tablets per pack (default 10). */
+  tabletsPerPack?: number;
+  /** Cumulative tablets dispensed via prescriptions. */
+  tabletsSold?: number;
+  /** Derived totals from API: revenue and profit based on tabletsSold. */
+  revenue?: number;
+  profit?: number;
   stock: number;
   lowStockAt: number;
   batchNo: string;
@@ -89,7 +104,7 @@ export const SEED_DOCTORS: Doctor[] = [
 /* ── Medicines ────────────────────────────────────────────────────────────── */
 
 export const SEED_MEDICINES: Medicine[] = [
-  { id: 1,  name: "Augmentin 625mg",     generic: "Amoxicillin/Clavulanate", company: "GSK",         unit: "tab",    purchasePrice: 18,  sellingPrice: 28,  stock: 32,  lowStockAt: 25, batchNo: "B2401", expiry: ts(-180 + 365), barcode: "849000000001", sold30d: 140 },
+  { id: 1,  name: "Augmentin 625mg",     generic: "Amoxicillin/Clavulanate", company: "GSK",         unit: "tab",    purchasePrice: 18,  sellingPrice: 28,  stock: 32,  lowStockAt: 25, batchNo: "B2401", expiry: ts(-180 + 365), barcode: "849000000001", sold30d: 140, tabletsPerPack: 10, tabletsSold: 0 },
   { id: 2,  name: "Panadol Extra",        generic: "Paracetamol/Caffeine",   company: "GSK",         unit: "tab",    purchasePrice: 4,   sellingPrice: 7,   stock: 180, lowStockAt: 25, batchNo: "B2402", expiry: ts(-180 + 548), barcode: "849000000002", sold30d: 280 },
   { id: 3,  name: "Metformin 500mg",      generic: "Metformin",              company: "Searle",      unit: "tab",    purchasePrice: 3,   sellingPrice: 6,   stock: 240, lowStockAt: 25, batchNo: "B2403", expiry: ts(-180 + 480), barcode: "849000000003", sold30d: 220 },
   { id: 4,  name: "Glucophage XR 1g",    generic: "Metformin XR",           company: "Merck",       unit: "tab",    purchasePrice: 9,   sellingPrice: 15,  stock: 140, lowStockAt: 25, batchNo: "B2404", expiry: ts(-180 + 400), barcode: "849000000004", sold30d: 160 },
