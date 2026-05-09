@@ -12,7 +12,7 @@ import {
 } from "recharts";
 import {
   Users, Receipt, FileText, Boxes, AlertTriangle, CalendarRange, Plus, ArrowRight,
-  TrendingUp, Activity, Pill, ShieldCheck, WalletCards, UserCheck, Coins,
+  TrendingUp, Activity, Pill, ShieldCheck, WalletCards, UserCheck,
 } from "lucide-react";
 import {
   dailyKPIs, monthlySeries, last30Days, peakHours, diseaseTrends, topMedicines,
@@ -40,11 +40,6 @@ export default function Dashboard() {
   const collectionRate = Math.round((paidTotal / Math.max(1, billedTotal)) * 100);
   const grossMargin = Math.round((k.monthProfit / Math.max(1, k.monthRevenue)) * 100);
   const operationalScore = Math.max(78, Math.min(98, 100 - k.lowStock * 2 - k.expiringSoon + Math.round(grossMargin / 4)));
-
-  // Tablet-based sales metrics aggregated from medicine inventory
-  const totalTabletsSold = medicines.reduce((s, m) => s + (m.tabletsSold ?? 0), 0);
-  const totalTabletProfit = medicines.reduce((s, m) => s + (m.profit ?? 0), 0);
-  const totalTabletRevenue = medicines.reduce((s, m) => s + (m.revenue ?? 0), 0);
   return (
     <PageContainer>
       <PageHeader
@@ -145,8 +140,6 @@ export default function Dashboard() {
         <KpiCard label="Inventory value" value={k.inventoryValue} icon={Boxes} format={fmtMoney} delta={0.8} hint={`${medicines.length} SKUs`} accent="emerald" />
         <KpiCard label="Low stock" value={k.lowStock} icon={AlertTriangle} hint="Reorder needed" accent="rose" />
         <KpiCard label="Pending dues" value={k.dues} icon={Receipt} format={fmtMoney} hint="Across patients" accent="amber" />
-        <KpiCard label="Tablets sold" value={totalTabletsSold} icon={Pill} hint={`${fmtMoney(totalTabletRevenue)} revenue`} accent="primary" />
-        <KpiCard label="Medicine profit" value={totalTabletProfit} icon={Coins} format={fmtMoney} hint="From tablet sales" accent="emerald" />
       </div>
 
       <div className="grid lg:grid-cols-3 gap-4 mb-4">

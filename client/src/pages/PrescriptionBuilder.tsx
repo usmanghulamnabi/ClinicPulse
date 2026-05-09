@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { Link, useLocation } from "wouter";
 import { PageContainer, PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/ui/card";
@@ -13,23 +13,14 @@ import {
 } from "@/components/ui/popover";
 import {
   Plus, Trash2, Save, ArrowLeft, AlertTriangle, Sparkles, FlaskConical, Calculator,
-  BookmarkPlus, FileText, Search, Loader2, Stethoscope, X,
+  BookmarkPlus, FileText, Search, Loader2,
 } from "lucide-react";
+import { RX_TEMPLATES } from "@/lib/demo-data";
 import { PEDIATRIC_DOSES, calculatePediatricDose } from "@/lib/pediatric-doses";
 import { useToast } from "@/hooks/use-toast";
 import { useStore } from "@/lib/store";
-import { useAuth } from "@/components/AuthProvider";
-import { calcTabletsForItem } from "@/lib/tablet-calc";
-import {
-  BUILT_IN_RX_TEMPLATES, RX_TEMPLATE_DISCLAIMER,
-  loadCustomTemplates, upsertCustomTemplate, deleteCustomTemplate,
-  type RxTemplate,
-} from "@/lib/rx-templates";
-import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
-} from "@/components/ui/dialog";
 
-type Item = { id: string; medicineId: number | null; dose: string; frequency: string; duration: number; qty: number; instructions?: string; notes?: string };
+type Item = { id: string; medicineId: number | null; dose: string; frequency: string; duration: number; qty: number; notes?: string };
 
 const FREQS = ["1-0-0","0-1-0","0-0-1","1-0-1","1-1-1","1-1-1-1","PRN","STAT"];
 
@@ -48,19 +39,12 @@ function getHashQueryParam(name: string): string | null {
 
 export default function PrescriptionBuilder() {
   const [, setLocation] = useLocation();
-  const { patients: PATIENTS, medicines: MEDICINES, addPrescription, loading, error } = useStore();
-  const { user } = useAuth();
+  const { patients: PATIENTS, medicines: MEDICINES, addPrescription, loading } = useStore();
 
   // Read patientId from hash query param (e.g. #/prescriptions/new?patientId=3)
   const urlPatientId = parseInt(getHashQueryParam("patientId") ?? "0") || 0;
   const defaultPatientId = urlPatientId || PATIENTS[0]?.id || 0;
   const [patientId, setPatientId] = useState<number>(defaultPatientId);
-  // If patients load after this component mounts (race during initial fetch),
-  // adopt the first available patient automatically so the form is usable.
-  useEffect(() => {
-    if (patientId === 0 && PATIENTS.length > 0) setPatientId(urlPatientId || PATIENTS[0].id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [PATIENTS.length]);
   const [diagnosis, setDiagnosis] = useState("Type 2 Diabetes follow-up");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<Item[]>([
@@ -106,24 +90,9 @@ export default function PrescriptionBuilder() {
     return Array.from(seen.entries()).filter(([, n]) => n > 1).map(([id]) => id);
   }, [items]);
 
-  // Per-line auto-calculated tablets to dispense (from dose × frequency × duration).
-  const tabletsByLine = useMemo(() => items.map(it => {
+  const total = items.reduce((s, it) => {
     const m = MEDICINES.find(x => x.id === it.medicineId);
-    return calcTabletsForItem(it, m?.unit);
-  }), [items, MEDICINES]);
-
-  // Total cost = sum( tablets × salePricePerPack/tabletsPerPack )
-  const total = items.reduce((s, it, idx) => {
-    const m = MEDICINES.find(x => x.id === it.medicineId);
-    if (!m) return s;
-    const tpp = m.tabletsPerPack ?? 10;
-    const u = String(m.unit ?? "").toLowerCase();
-    const isTablet = /^(tab|cap|capsule|tablet)/.test(u);
-    const tabs = tabletsByLine[idx] || 0;
-    if (isTablet && tabs > 0) {
-      return s + (m.sellingPrice / Math.max(1, tpp)) * tabs;
-    }
-    return s + m.sellingPrice * (it.qty || 0);
+    return s + (m ? m.sellingPrice * it.qty : 0);
   }, 0);
 
   const addItem = () => setItems(arr => [...arr, { id: String(Date.now()), medicineId: null, dose: "", frequency: "1-0-1", duration: 7, qty: 14 }]);
@@ -137,116 +106,27 @@ export default function PrescriptionBuilder() {
     setDoseFormLabel(next.forms[0].label);
   };
 
-  // Auto-calc quantity using the same canonical tablet calculator the API uses
-  const recalcQty = (it: Item, medicineId: number | null = it.medicineId): number => {
-    const med = MEDICINES.find(m => m.id === medicineId);
-    const tabs = calcTabletsForItem({
-      dose: it.dose, frequency: it.frequency, duration: it.duration, qty: it.qty,
-    }, med?.unit);
-    if (tabs > 0) return tabs;
-    // Legacy fallback for non-tablet units (sum digits of "1-0-1")
-    const sum = String(it.frequency).split("-").reduce((a,b) => a + (parseInt(b) || 0), 0) || 1;
-    return sum * (it.duration || 0);
-  };
-
-  /* ── Templates: built-in + user-saved (browser-persisted) ───────────── */
-  const [customTemplates, setCustomTemplates] = useState<RxTemplate[]>(() => loadCustomTemplates());
-  const allTemplates = useMemo<RxTemplate[]>(() => [...customTemplates, ...BUILT_IN_RX_TEMPLATES], [customTemplates]);
-  const [tplFilter, setTplFilter] = useState("");
-  const filteredTemplates = useMemo(() => {
-    if (!tplFilter.trim()) return allTemplates;
-    const q = tplFilter.toLowerCase();
-    return allTemplates.filter(t =>
-      t.name.toLowerCase().includes(q) ||
-      t.diagnosis.toLowerCase().includes(q) ||
-      (t.category ?? "").toLowerCase().includes(q)
-    );
-  }, [allTemplates, tplFilter]);
-
-  /** Best-effort match a template medicine name to an inventory item. */
-  const findMedicine = (name: string) => {
-    const n = name.trim().toLowerCase();
-    if (!n) return null;
-    let m = MEDICINES.find(x => x.name.toLowerCase() === n);
-    if (m) return m;
-    m = MEDICINES.find(x => x.name.toLowerCase().includes(n) || n.includes(x.name.toLowerCase()));
-    if (m) return m;
-    // Fallback: match by leading generic substring ("Telmisartan 40mg" → "Telmisartan")
-    const head = n.split(/\s+/)[0];
-    return MEDICINES.find(x => x.generic.toLowerCase().startsWith(head)) ?? null;
+  const recalcQty = (it: Item) => {
+    const tabs = it.frequency.split("-").reduce((a,b) => a + (parseInt(b) || 0), 0) || 1;
+    return tabs * it.duration;
   };
 
   const applyTemplate = (tplId: string) => {
-    const tpl = allTemplates.find(t => t.id === tplId);
-    if (!tpl) return;
+    const tpl = RX_TEMPLATES.find(t => t.id === tplId)!;
     setDiagnosis(tpl.diagnosis);
-    if (tpl.notes) setNotes(tpl.notes);
     setItems(tpl.items.map((it, i) => {
-      const med = findMedicine(it.medicine);
-      const baseItem: Item = {
-        id: String(Date.now() + i),
+      const med = MEDICINES.find(m => m.name === it.medicine);
+      const tabs = it.frequency.split("-").reduce((a,b) => a + (parseInt(b) || 0), 0) || 1;
+      return {
+        id: String(i+1),
         medicineId: med?.id ?? null,
         dose: it.dose,
         frequency: it.frequency,
         duration: it.duration,
-        qty: 0,
-        instructions: it.instructions,
+        qty: tabs * it.duration,
       };
-      // Use the canonical tablet calculator so tablet-based prescriptions work end-to-end
-      baseItem.qty = recalcQty(baseItem, med?.id ?? null);
-      return baseItem;
     }));
-    const missing = tpl.items.filter(it => !findMedicine(it.medicine));
-    toast({
-      title: `${tpl.name} loaded`,
-      description: missing.length > 0
-        ? `Loaded ${tpl.items.length - missing.length}/${tpl.items.length} medicines. Pick a substitute for: ${missing.map(m => m.medicine).join(", ")}.`
-        : `${tpl.items.length} medicines pre-filled. Edit any field before saving.`,
-    });
-  };
-
-  /* ── Save-as-template dialog state ─────────────────────────── */
-  const [saveTplOpen, setSaveTplOpen] = useState(false);
-  const [tplName, setTplName] = useState("");
-
-  const handleSaveAsTemplate = () => {
-    const name = tplName.trim();
-    if (!name) {
-      toast({ title: "Name required", description: "Give the template a short name (e.g. 'My HTN protocol').", variant: "destructive" });
-      return;
-    }
-    const validItems = items.filter(it => it.medicineId !== null);
-    if (validItems.length === 0) {
-      toast({ title: "Nothing to save", description: "Add at least one medicine first.", variant: "destructive" });
-      return;
-    }
-    const tpl: RxTemplate = {
-      id: `tpl-custom-${Date.now()}`,
-      name,
-      diagnosis: diagnosis || name,
-      notes,
-      items: validItems.map(it => {
-        const med = MEDICINES.find(m => m.id === it.medicineId);
-        return {
-          medicine: med?.name ?? "",
-          dose: it.dose,
-          frequency: it.frequency,
-          duration: it.duration,
-          instructions: it.instructions,
-        };
-      }),
-    };
-    const next = upsertCustomTemplate(tpl);
-    setCustomTemplates(next);
-    setSaveTplOpen(false);
-    setTplName("");
-    toast({ title: "Template saved", description: `“${tpl.name}” added to your custom templates.` });
-  };
-
-  const handleDeleteCustomTemplate = (id: string, name: string) => {
-    const next = deleteCustomTemplate(id);
-    setCustomTemplates(next);
-    toast({ title: "Template removed", description: `Deleted “${name}” from your custom templates.` });
+    toast({ title: "Template applied", description: `${tpl.name} regimen loaded.` });
   };
 
   const addCalculatedDose = () => {
@@ -274,7 +154,7 @@ export default function PrescriptionBuilder() {
   };
 
   // Show a loading state while store is bootstrapping from API
-  if (loading && PATIENTS.length === 0 && MEDICINES.length === 0) {
+  if (loading && PATIENTS.length === 0) {
     return (
       <PageContainer>
         <Link href="/prescriptions" className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground hover:text-foreground mb-4">
@@ -283,23 +163,6 @@ export default function PrescriptionBuilder() {
         <div className="flex items-center justify-center py-16">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
-      </PageContainer>
-    );
-  }
-
-  // Surface API/store errors instead of silently rendering an empty form
-  if (error && PATIENTS.length === 0 && MEDICINES.length === 0) {
-    return (
-      <PageContainer>
-        <Link href="/prescriptions" className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground hover:text-foreground mb-4">
-          <ArrowLeft className="h-3.5 w-3.5" /> Back
-        </Link>
-        <Card className="p-8 text-center border-card-border">
-          <AlertTriangle className="h-7 w-7 text-amber-500 mx-auto mb-2" />
-          <p className="font-medium">Could not load prescription workspace</p>
-          <p className="text-[12.5px] text-muted-foreground mt-1">{error}</p>
-          <Button variant="outline" size="sm" className="mt-4" onClick={() => window.location.reload()}>Retry</Button>
-        </Card>
       </PageContainer>
     );
   }
@@ -315,30 +178,18 @@ export default function PrescriptionBuilder() {
         subtitle="Build a smart prescription with allergy alerts, dose calculation, and templates."
         actions={
           <>
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setSaveTplOpen(true)} data-testid="button-save-as-template">
-              <BookmarkPlus className="h-4 w-4"/> Save as template
-            </Button>
+            <Button variant="outline" size="sm" className="gap-1.5"><BookmarkPlus className="h-4 w-4"/> Save as template</Button>
             <Button size="sm" className="gap-1.5" onClick={async () => {
               const validItems = items.filter(it => it.medicineId !== null);
               if (validItems.length === 0) { toast({ title: "No medicines", description: "Add at least one medicine.", variant: "destructive" }); return; }
               try {
                 const rx = await addPrescription({
                   patientId,
-                  // Prefer the signed-in doctor; fall back to patient's regular doctor; final fallback admin
-                  doctorId: user?.doctorId ?? patient?.doctorId ?? 1,
+                  doctorId: patient?.doctorId ?? 1,
                   diagnosis,
                   status: "active",
-                  items: validItems.map(it => ({
-                    medicineId: it.medicineId!,
-                    dose: it.dose,
-                    frequency: it.frequency,
-                    duration: it.duration,
-                    // Include the auto-calculated tablet quantity so the API
-                    // tablet calculator and the UI agree.
-                    qty: tabletsByLine[items.indexOf(it)] || it.qty,
-                    instructions: it.instructions,
-                  })),
-                  total: Math.round(total),
+                  items: validItems.map(it => ({ medicineId: it.medicineId!, dose: it.dose, frequency: it.frequency, duration: it.duration, qty: it.qty })),
+                  total,
                 });
                 toast({ title: "Prescription saved", description: `Rx #${rx.id} created for ${patient?.fullName ?? "patient"}.` });
                 setLocation("/prescriptions");
@@ -413,10 +264,8 @@ export default function PrescriptionBuilder() {
                 </div>
                 {items.map((it, idx) => {
                   const med = MEDICINES.find(m => m.id === it.medicineId);
-                  const calcTabs = tabletsByLine[idx] || 0;
                   return (
-                    <div key={it.id} className="border-t border-border">
-                    <div className="grid grid-cols-[28px_2.4fr_0.7fr_0.9fr_0.6fr_0.6fr_28px] gap-2 px-2 py-2 items-center">
+                    <div key={it.id} className="grid grid-cols-[28px_2.4fr_0.7fr_0.9fr_0.6fr_0.6fr_28px] gap-2 px-2 py-2 items-center border-t border-border">
                       <div className="text-[12px] num text-muted-foreground">{idx+1}</div>
                       <Popover>
                         <PopoverTrigger asChild>
@@ -448,31 +297,8 @@ export default function PrescriptionBuilder() {
                         <SelectContent>{FREQS.map(f => <SelectItem key={f} value={f}>{f}</SelectItem>)}</SelectContent>
                       </Select>
                       <Input type="number" value={it.duration} onChange={e => { const dur = parseInt(e.target.value) || 0; const newIt = { ...it, duration: dur }; updateItem(it.id, { duration: dur, qty: recalcQty(newIt) }); }} className="h-9 text-right text-[12.5px] num"/>
-                      <div className="flex flex-col items-end">
-                        <Input type="number" value={it.qty} onChange={e => updateItem(it.id, { qty: parseInt(e.target.value) || 0 })} className="h-9 text-right text-[12.5px] num"/>
-                        {calcTabs > 0 && calcTabs !== it.qty && (
-                          <button
-                            type="button"
-                            onClick={() => updateItem(it.id, { qty: calcTabs })}
-                            className="text-[10px] text-primary hover:underline mt-0.5"
-                            title="Use auto-calculated tablet quantity"
-                          >
-                            auto: {calcTabs}
-                          </button>
-                        )}
-                      </div>
+                      <Input type="number" value={it.qty} onChange={e => updateItem(it.id, { qty: parseInt(e.target.value) || 0 })} className="h-9 text-right text-[12.5px] num"/>
                       <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" onClick={() => removeItem(it.id)}><Trash2 className="h-3.5 w-3.5"/></Button>
-                    </div>
-                    {/* Instructions row — patient-facing directions printed on the prescription */}
-                    <div className="px-2 pb-2 -mt-1">
-                      <Input
-                        value={it.instructions ?? ""}
-                        onChange={e => updateItem(it.id, { instructions: e.target.value })}
-                        placeholder="Instructions (e.g. after meals, with water, avoid driving…)"
-                        className="h-8 text-[11.5px] bg-muted/30 border-dashed"
-                        data-testid={`input-instructions-${it.id}`}
-                      />
-                    </div>
                     </div>
                   );
                 })}
@@ -498,58 +324,15 @@ export default function PrescriptionBuilder() {
           <Card className="p-5 border-card-border">
             <div className="flex items-center gap-2 mb-3">
               <FileText className="h-4 w-4 text-primary"/>
-              <div className="text-[13px] font-medium">Disease templates</div>
-              <Badge variant="outline" className="ml-auto text-[10px]">{allTemplates.length}</Badge>
+              <div className="text-[13px] font-medium">Templates</div>
             </div>
-            <div className="relative mb-2">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground"/>
-              <Input
-                value={tplFilter}
-                onChange={e => setTplFilter(e.target.value)}
-                placeholder="Search hypertension, diabetes, UTI…"
-                className="pl-7 h-8 text-[12px]"
-                data-testid="input-template-search"
-              />
-            </div>
-            <div className="space-y-1.5 max-h-[360px] overflow-y-auto pr-1">
-              {filteredTemplates.length === 0 ? (
-                <div className="text-[11.5px] text-muted-foreground text-center py-4">No templates match “{tplFilter}”.</div>
-              ) : filteredTemplates.map(t => {
-                const isCustom = t.id.startsWith("tpl-custom-");
-                return (
-                  <div key={t.id} className="group flex items-stretch gap-1.5">
-                    <button
-                      onClick={() => applyTemplate(t.id)}
-                      className="flex-1 text-left px-3 py-2 rounded-md border border-border hover-elevate"
-                      data-testid={`template-${t.id}`}
-                    >
-                      <div className="flex items-center gap-1.5">
-                        <div className="text-[12.5px] font-medium truncate">{t.name}</div>
-                        {t.category && (
-                          <Badge variant="outline" className="text-[9.5px] py-0 px-1 border-primary/30 text-primary">{t.category}</Badge>
-                        )}
-                        {isCustom && (
-                          <Badge variant="outline" className="text-[9.5px] py-0 px-1 border-emerald-500/40 text-emerald-600 dark:text-emerald-400">Yours</Badge>
-                        )}
-                      </div>
-                      <div className="text-[11px] text-muted-foreground truncate">{t.items.length} medicines · {t.diagnosis}</div>
-                    </button>
-                    {isCustom && (
-                      <button
-                        onClick={() => handleDeleteCustomTemplate(t.id, t.name)}
-                        className="px-2 rounded-md border border-border text-muted-foreground hover:text-rose-600 hover-elevate opacity-0 group-hover:opacity-100"
-                        aria-label={`Delete template ${t.name}`}
-                        data-testid={`delete-template-${t.id}`}
-                      >
-                        <Trash2 className="h-3.5 w-3.5"/>
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            <div className="mt-3 rounded-md border border-amber-500/25 bg-amber-500/5 p-2 text-[10.5px] text-amber-700 dark:text-amber-300 leading-relaxed">
-              <Stethoscope className="h-3 w-3 inline mr-1"/> {RX_TEMPLATE_DISCLAIMER}
+            <div className="space-y-1.5">
+              {RX_TEMPLATES.map(t => (
+                <button key={t.id} onClick={() => applyTemplate(t.id)} className="w-full text-left px-3 py-2 rounded-md border border-border hover-elevate" data-testid={`template-${t.id}`}>
+                  <div className="text-[12.5px] font-medium">{t.name}</div>
+                  <div className="text-[11px] text-muted-foreground">{t.items.length} medicines · {t.diagnosis}</div>
+                </button>
+              ))}
             </div>
           </Card>
 
@@ -675,39 +458,6 @@ export default function PrescriptionBuilder() {
           </Card>
         </div>
       </div>
-
-      {/* Save-as-template dialog — persists to browser localStorage */}
-      <Dialog open={saveTplOpen} onOpenChange={setSaveTplOpen}>
-        <DialogContent className="max-w-[480px]">
-          <DialogHeader>
-            <DialogTitle>Save as template</DialogTitle>
-            <DialogDescription>
-              Snapshot the current diagnosis, medicines, doses and instructions. Available next time you open the prescription builder on this device.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 py-2">
-            <div>
-              <Label className="text-[12px]">Template name</Label>
-              <Input
-                className="mt-1"
-                placeholder="My HTN protocol"
-                value={tplName}
-                onChange={e => setTplName(e.target.value)}
-                autoFocus
-                data-testid="input-template-name"
-              />
-            </div>
-            <div className="text-[11.5px] text-muted-foreground">
-              Will save {items.filter(it => it.medicineId).length} medicine line(s) under “{diagnosis || "—"}”.
-              <br/><span className="text-amber-600 dark:text-amber-400">Stored locally on this device only — not synced across devices.</span>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSaveTplOpen(false)}>Cancel</Button>
-            <Button onClick={handleSaveAsTemplate} data-testid="button-confirm-save-template">Save template</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </PageContainer>
   );
 }

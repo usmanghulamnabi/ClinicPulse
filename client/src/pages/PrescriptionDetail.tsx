@@ -130,16 +130,12 @@ export default function PrescriptionDetail() {
             <tbody>
               {(r.items ?? []).map((it, i) => {
                 const m = medicines.find(x => x.id === it.medicineId);
-                const instructions = (it as { instructions?: string }).instructions;
                 return (
-                  <tr key={i} className="border-b border-border/60 align-top">
+                  <tr key={i} className="border-b border-border/60">
                     <td className="py-3 num">{i+1}</td>
                     <td className="py-3">
                       <div className="font-medium">{m?.name ?? "Unknown medicine"}</div>
                       <div className="text-muted-foreground text-[11.5px]">{m?.generic ?? ""}</div>
-                      {instructions && (
-                        <div className="text-[11px] text-foreground/80 italic mt-1">→ {instructions}</div>
-                      )}
                     </td>
                     <td className="py-3 num">{it.dose}</td>
                     <td className="py-3 font-mono num">{it.frequency}</td>

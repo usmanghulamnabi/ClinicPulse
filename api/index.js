@@ -180,15 +180,9 @@ async function initDb() {
       expiry         BIGINT NOT NULL DEFAULT 0,
       barcode        TEXT NOT NULL DEFAULT '',
       sold_30d       INTEGER NOT NULL DEFAULT 0,
-      tablets_per_pack INTEGER NOT NULL DEFAULT 10,
-      tablets_sold     INTEGER NOT NULL DEFAULT 0,
       created_at     BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT * 1000
     )
   `;
-
-  // Migrations for previously-deployed DBs that don't yet have these columns
-  await db`ALTER TABLE medicines ADD COLUMN IF NOT EXISTS tablets_per_pack INTEGER NOT NULL DEFAULT 10`;
-  await db`ALTER TABLE medicines ADD COLUMN IF NOT EXISTS tablets_sold     INTEGER NOT NULL DEFAULT 0`;
 
   // Patients (doctor_id SET NULL on doctor delete)
   await db`
@@ -476,34 +470,14 @@ function mapDoctor(r) {
 }
 
 function mapMedicine(r) {
-  // Pack-based prices map to existing purchase_price/selling_price columns.
-  // Per-tablet economics are derived from tabletsPerPack so the existing schema
-  // and seed values keep working without migration of values.
-  const tabletsPerPack = Number(r.tablets_per_pack ?? 10) || 1;
-  const costPerPack    = Number(r.purchase_price);
-  const salePerPack    = Number(r.selling_price);
-  const tabletsSold    = Number(r.tablets_sold ?? 0);
-  const costPerTablet  = costPerPack / tabletsPerPack;
-  const pricePerTablet = salePerPack / tabletsPerPack;
-  const revenue        = tabletsSold * pricePerTablet;
-  const profit         = tabletsSold * (pricePerTablet - costPerTablet);
   return {
     id: r.id,
     name: r.name,
     generic: r.generic,
     company: r.company,
     unit: r.unit,
-    purchasePrice: costPerPack,
-    sellingPrice: salePerPack,
-    // Friendly aliases for tablet-based UI:
-    costPerPack,
-    salePricePerPack: salePerPack,
-    pricePerTablet:   Number.isFinite(pricePerTablet) ? Math.round(pricePerTablet * 100) / 100 : 0,
-    costPerTablet:    Number.isFinite(costPerTablet)  ? Math.round(costPerTablet  * 100) / 100 : 0,
-    tabletsPerPack,
-    tabletsSold,
-    revenue:          Math.round(revenue * 100) / 100,
-    profit:           Math.round(profit  * 100) / 100,
+    purchasePrice: Number(r.purchase_price),
+    sellingPrice: Number(r.selling_price),
     stock: r.stock,
     lowStockAt: r.low_stock_at,
     batchNo: r.batch_no,
@@ -539,10 +513,6 @@ function mapPatient(r) {
 }
 
 function mapPrescription(r) {
-  let items = r.items || [];
-  if (typeof items === "string") {
-    try { items = JSON.parse(items); } catch { items = []; }
-  }
   return {
     id: r.id,
     patientId: r.patient_id,
@@ -550,7 +520,7 @@ function mapPrescription(r) {
     createdAt: Number(r.created_at),
     diagnosis: r.diagnosis,
     status: r.status,
-    items: Array.isArray(items) ? items : [],
+    items: r.items || [],
     total: Number(r.total),
   };
 }
@@ -661,146 +631,6 @@ function makeResetCode() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
-/* ── Prescription tablet calculator ──────────────────────────────────────── */
-
-/**
- * Parse the number of tablets/capsules a prescription line will consume.
- *
- * Frequency parsing handles standard medical abbreviations:
- *   OD/QD/QAM/QPM/HS/Night = 1/day, BD/BID = 2/day, TDS/TID = 3/day,
- *   QID/QDS = 4/day, Q4H = 6/day, Q6H = 4/day, Q8H = 3/day, Q12H = 2/day,
- *   PRN/SOS/STAT = 0 (not counted unless dose has explicit qty).
- * Numeric "1-0-1" style strings sum digits.
- *
- * Dose parsing only counts tablet/cap/capsule units (e.g. "1 tablet", "1/2 tab",
- *   "0.5 tablet", "2 tablets"). If no tablet keyword is found in `dose`, but the
- *   medicine `unit` is tab/cap, we default to 1 tablet per dose. For non-tablet
- *   units (ml, sachet, inhaler, syrup) we return 0 — those don't deduct tablets.
- *
- * Duration parsing accepts:
- *   number `duration` (treated as days), "5 day(s)", "1 week", "2 wks", "1 month".
- */
-function calcDosesPerDay(freq) {
-  if (freq == null) return 0;
-  const s = String(freq).trim().toLowerCase();
-  if (!s) return 0;
-  if (/^prn$|^sos$|^stat$/.test(s)) return 0;
-  // Numeric x-y-z pattern
-  if (/^[\d.]+(?:\s*[-/+]\s*[\d.]+)+$/.test(s)) {
-    return s.split(/[-/+]/).reduce((a, b) => a + (parseFloat(b) || 0), 0);
-  }
-  // Q4H / Q6H / Q8H / Q12H
-  const qm = s.match(/q\s*(\d+)\s*h/);
-  if (qm) {
-    const hrs = parseInt(qm[1]);
-    if (hrs > 0) return Math.max(1, Math.round(24 / hrs));
-  }
-  if (/\bqid\b|\bqds\b/.test(s)) return 4;
-  if (/\btds\b|\btid\b/.test(s)) return 3;
-  if (/\bbid\b|\bbd\b|\btwice\b/.test(s)) return 2;
-  if (/\bod\b|\bqd\b|\bqam\b|\bqpm\b|\bhs\b|\bnight\b|\bonce\b|\bdaily\b/.test(s)) return 1;
-  // "x times a day / per day"
-  const tm = s.match(/(\d+)\s*(?:x|times)/);
-  if (tm) return parseInt(tm[1]) || 0;
-  return 0;
-}
-
-function calcTabletsPerDose(dose, medicineUnit) {
-  if (!dose) {
-    // No dose text — for tablet-like units default to 1 tablet/dose
-    const u = String(medicineUnit || "").toLowerCase();
-    return /^(tab|cap|capsule|tablet)/.test(u) ? 1 : 0;
-  }
-  const s = String(dose).toLowerCase();
-  // Look for explicit tablet/capsule mention
-  const tabRegex = /(\d+(?:\.\d+)?|\d+\/\d+|½|¼|¾)\s*(?:tab|tablet|cap|capsule)s?\b/;
-  const m = s.match(tabRegex);
-  if (m) {
-    let raw = m[1];
-    if (raw === "½") return 0.5;
-    if (raw === "¼") return 0.25;
-    if (raw === "¾") return 0.75;
-    if (/\//.test(raw)) {
-      const [a, b] = raw.split("/").map(Number);
-      return b ? a / b : 0;
-    }
-    return parseFloat(raw) || 0;
-  }
-  // No tablet keyword: if dose looks like "5 ml" or "100mcg" but unit is tablet/cap, default 1
-  if (/\bml\b|\bdrop|\bsachet|\bpuff|\binh|\bunit\b/.test(s)) return 0;
-  const u = String(medicineUnit || "").toLowerCase();
-  if (/^(tab|cap|capsule|tablet)/.test(u)) return 1;
-  return 0;
-}
-
-function calcDurationDays(item) {
-  if (item == null) return 0;
-  if (typeof item.duration === "number" && item.duration > 0) return item.duration;
-  const txt = String(item.duration || item.durationText || "").toLowerCase();
-  if (!txt) return 0;
-  const m = txt.match(/(\d+(?:\.\d+)?)\s*(day|days|d|week|weeks|wk|wks|w|month|months|mo)/);
-  if (!m) {
-    const n = parseFloat(txt);
-    return Number.isFinite(n) ? n : 0;
-  }
-  const n = parseFloat(m[1]);
-  const unit = m[2];
-  if (/^d/.test(unit)) return n;
-  if (/^w/.test(unit)) return n * 7;
-  if (/^mo?/.test(unit)) return n * 30;
-  return n;
-}
-
-/** Compute tablets a single prescription line will sell. Honors qty if explicitly set. */
-function calcTabletsForItem(item, medicine) {
-  if (!item) return 0;
-  const unit = medicine?.unit ?? "tab";
-  const u = String(unit).toLowerCase();
-  // Non-tablet inventory items (inhalers/sachets/units) never increment tabletsSold.
-  if (!/^(tab|cap|capsule|tablet)/.test(u)) return 0;
-  const tabletsPerDose = calcTabletsPerDose(item.dose, unit);
-  const dosesPerDay    = calcDosesPerDay(item.frequency);
-  const days           = calcDurationDays(item);
-  let calc = tabletsPerDose * dosesPerDay * days;
-  if (!Number.isFinite(calc) || calc <= 0) {
-    // Fall back to caller-provided qty if it looks like a tablet count
-    const q = parseFloat(item.qty);
-    if (Number.isFinite(q) && q > 0) calc = q;
-  }
-  return Math.max(0, Math.round(calc));
-}
-
-/** Apply a delta of tablets sold to medicines and decrement pack stock. delta>0 sells, <0 reverses. */
-async function applyTabletsDelta(db, items, delta) {
-  if (!Array.isArray(items) || items.length === 0) return;
-  for (const it of items) {
-    if (!it || it.medicineId == null) continue;
-    const [med] = await db`SELECT * FROM medicines WHERE id = ${parseInt(it.medicineId)}`;
-    if (!med) continue;
-    const tabs = calcTabletsForItem(it, { unit: med.unit });
-    if (tabs <= 0) continue;
-    const dt = delta * tabs;
-    const tabletsPerPack = Math.max(1, Number(med.tablets_per_pack ?? 10));
-    // tablets_sold is monotonic per-medicine cumulative counter; clamp >= 0
-    const newSold = Math.max(0, Number(med.tablets_sold ?? 0) + dt);
-    // Pack stock deducts whole packs once a full pack has been consumed.
-    // We compute the pack count from cumulative sold over packs; deduct change.
-    const packsNowConsumed = Math.floor(newSold / tabletsPerPack);
-    const packsPreviouslyConsumed = Math.floor(Math.max(0, Number(med.tablets_sold ?? 0)) / tabletsPerPack);
-    const stockDelta = packsPreviouslyConsumed - packsNowConsumed; // negative = decrement
-    const newStock = Math.max(0, Number(med.stock ?? 0) + stockDelta);
-    // sold_30d is a rolling counter (kept loosely in sync).
-    const newSold30d = Math.max(0, Number(med.sold_30d ?? 0) + dt);
-    await db`
-      UPDATE medicines
-      SET tablets_sold = ${newSold},
-          stock        = ${newStock},
-          sold_30d     = ${newSold30d}
-      WHERE id = ${med.id}
-    `;
-  }
-}
-
 function parsePath(path) {
   const m = path.match(/\/api\/([^/?]+)(?:\/([^/?]+))?(?:\/([^/?]+))?/);
   if (!m) return { route: null, id: null, sub: null };
@@ -808,9 +638,6 @@ function parsePath(path) {
 }
 
 /* ── Main handler ────────────────────────────────────────────────────────── */
-
-// Exported for unit/smoke testing
-export const __testables = { calcDosesPerDay, calcTabletsPerDose, calcDurationDays, calcTabletsForItem };
 
 export default async function handler(req, res) {
   const url = new URL(req.url || "/", "https://clinicpulse.local");
@@ -1076,15 +903,11 @@ export default async function handler(req, res) {
         return send(res, 200, { prescription: mapPrescription(rx) });
       }
       if (method === "POST") {
-        const items = Array.isArray(body.items) ? body.items : [];
         const [rx] = await db`
           INSERT INTO prescriptions (patient_id,doctor_id,created_at,diagnosis,status,items,total)
-          VALUES (${body.patientId||null},${body.doctorId||null},${Date.now()},${body.diagnosis||""},${body.status||"active"},${JSON.stringify(items)},${body.total||0})
+          VALUES (${body.patientId||null},${body.doctorId||null},${Date.now()},${body.diagnosis||""},${body.status||"active"},${JSON.stringify(body.items||[])},${body.total||0})
           RETURNING *
         `;
-        // Update tabletsSold + pack stock for each item
-        try { await applyTabletsDelta(db, items, +1); }
-        catch (err) { console.error("applyTabletsDelta(+1) failed:", err.message); }
         return send(res, 201, { prescription: mapPrescription(rx) });
       }
       if (method === "PATCH" && id) {
@@ -1102,17 +925,6 @@ export default async function handler(req, res) {
       }
       if (method === "DELETE" && id) {
         if (tokenInfo && tokenInfo.role !== "admin" && tokenInfo.role !== "doctor") return send(res, 403, { error: "Doctor or admin only." });
-        // Reverse tablet sale before deleting
-        try {
-          const [existingRx] = await db`SELECT items FROM prescriptions WHERE id = ${parseInt(id)}`;
-          let parsedItems = existingRx?.items;
-          if (typeof parsedItems === "string") {
-            try { parsedItems = JSON.parse(parsedItems); } catch { parsedItems = []; }
-          }
-          if (Array.isArray(parsedItems)) {
-            await applyTabletsDelta(db, parsedItems, -1);
-          }
-        } catch (err) { console.error("applyTabletsDelta(-1) failed:", err.message); }
         await db`DELETE FROM prescriptions WHERE id = ${parseInt(id)}`;
         return send(res, 200, { ok: true });
       }
@@ -1130,14 +942,9 @@ export default async function handler(req, res) {
         return send(res, 200, { medicines: rows.map(mapMedicine) });
       }
       if (method === "POST") {
-        // Accept costPerPack/salePricePerPack as friendly aliases for purchase/selling price
-        const purchase = body.costPerPack       ?? body.purchasePrice ?? 0;
-        const selling  = body.salePricePerPack  ?? body.sellingPrice  ?? 0;
-        const tpp      = body.tabletsPerPack    ?? 10;
-        const tsold    = body.tabletsSold       ?? 0;
         const [m] = await db`
-          INSERT INTO medicines (name,generic,company,unit,purchase_price,selling_price,stock,low_stock_at,batch_no,expiry,barcode,sold_30d,tablets_per_pack,tablets_sold)
-          VALUES (${body.name||""},${body.generic||""},${body.company||""},${body.unit||"tab"},${purchase},${selling},${body.stock||0},${body.lowStockAt||25},${body.batchNo||""},${body.expiry||0},${body.barcode||""},${body.sold30d||0},${tpp},${tsold})
+          INSERT INTO medicines (name,generic,company,unit,purchase_price,selling_price,stock,low_stock_at,batch_no,expiry,barcode,sold_30d)
+          VALUES (${body.name||""},${body.generic||""},${body.company||""},${body.unit||"tab"},${body.purchasePrice||0},${body.sellingPrice||0},${body.stock||0},${body.lowStockAt||25},${body.batchNo||""},${body.expiry||0},${body.barcode||""},${body.sold30d||0})
           RETURNING *
         `;
         return send(res, 201, { medicine: mapMedicine(m) });
@@ -1146,22 +953,18 @@ export default async function handler(req, res) {
         const [existing] = await db`SELECT * FROM medicines WHERE id=${parseInt(id)}`;
         if (!existing) return send(res, 404, { error: "Medicine not found" });
         const f = {};
-        if (body.name             !== undefined) f.name = body.name;
-        if (body.generic          !== undefined) f.generic = body.generic;
-        if (body.company          !== undefined) f.company = body.company;
-        if (body.unit             !== undefined) f.unit = body.unit;
-        if (body.purchasePrice    !== undefined) f.purchase_price = body.purchasePrice;
-        if (body.costPerPack      !== undefined) f.purchase_price = body.costPerPack;
-        if (body.sellingPrice     !== undefined) f.selling_price  = body.sellingPrice;
-        if (body.salePricePerPack !== undefined) f.selling_price  = body.salePricePerPack;
-        if (body.stock            !== undefined) f.stock = body.stock;
-        if (body.lowStockAt       !== undefined) f.low_stock_at = body.lowStockAt;
-        if (body.batchNo          !== undefined) f.batch_no = body.batchNo;
-        if (body.expiry           !== undefined) f.expiry = body.expiry;
-        if (body.barcode          !== undefined) f.barcode = body.barcode;
-        if (body.sold30d          !== undefined) f.sold_30d = body.sold30d;
-        if (body.tabletsPerPack   !== undefined) f.tablets_per_pack = Math.max(1, parseInt(body.tabletsPerPack) || 1);
-        if (body.tabletsSold      !== undefined) f.tablets_sold     = Math.max(0, parseInt(body.tabletsSold) || 0);
+        if (body.name           !== undefined) f.name = body.name;
+        if (body.generic        !== undefined) f.generic = body.generic;
+        if (body.company        !== undefined) f.company = body.company;
+        if (body.unit           !== undefined) f.unit = body.unit;
+        if (body.purchasePrice  !== undefined) f.purchase_price = body.purchasePrice;
+        if (body.sellingPrice   !== undefined) f.selling_price = body.sellingPrice;
+        if (body.stock          !== undefined) f.stock = body.stock;
+        if (body.lowStockAt     !== undefined) f.low_stock_at = body.lowStockAt;
+        if (body.batchNo        !== undefined) f.batch_no = body.batchNo;
+        if (body.expiry         !== undefined) f.expiry = body.expiry;
+        if (body.barcode        !== undefined) f.barcode = body.barcode;
+        if (body.sold30d        !== undefined) f.sold_30d = body.sold30d;
         if (Object.keys(f).length === 0) return send(res, 200, { medicine: mapMedicine(existing) });
         const [updated] = await db`UPDATE medicines SET ${db(f)} WHERE id=${parseInt(id)} RETURNING *`;
         return send(res, 200, { medicine: mapMedicine(updated) });
