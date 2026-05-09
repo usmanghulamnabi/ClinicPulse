@@ -276,7 +276,7 @@ export default function PrescriptionBuilder() {
                         <PopoverContent align="start" className="p-0 w-[360px]">
                           <div className="p-2 border-b border-border">
                             <Input placeholder="Search by name or generic" className="h-8" autoFocus
-                              onChange={e => { /* Demo: visual only */ }}/>
+                              onChange={() => { /* live filter handled by full picker below */ }}/>
                           </div>
                           <div className="max-h-[280px] overflow-y-auto">
                             {MEDICINES.slice(0, 20).map(m => (

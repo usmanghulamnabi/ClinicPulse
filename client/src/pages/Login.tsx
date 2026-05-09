@@ -16,7 +16,6 @@ export default function Login() {
   const [, setLocation] = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [otp, setOtp] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("signin");
   const [resetEmail, setResetEmail] = useState("");
@@ -25,6 +24,13 @@ export default function Login() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [resetStep, setResetStep] = useState<"request" | "verify">("request");
   const [resetLoading, setResetLoading] = useState(false);
+  const [devCode, setDevCode] = useState<string | null>(null);
+  // Sign-up form
+  const [suFirstName, setSuFirstName] = useState("");
+  const [suLastName, setSuLastName] = useState("");
+  const [suEmail, setSuEmail] = useState("");
+  const [suPassword, setSuPassword] = useState("");
+  const [suLoading, setSuLoading] = useState(false);
   const { toast } = useToast();
 
   const handleLogin = async (e?: React.FormEvent) => {
@@ -41,11 +47,16 @@ export default function Login() {
     setResetLoading(true);
     try {
       const res = await apiRequest("POST", "/api/auth/password/request", { email: resetEmail });
-      await res.json();
+      const data = await res.json() as { devCode?: string };
       setResetStep("verify");
+      // For single-clinic deployments without an SMTP integration, surface the
+      // generated code to the operator so the workflow remains functional.
+      if (data?.devCode) setDevCode(data.devCode);
       toast({
-        title: "Reset code sent",
-        description: "Check the account email for reset instructions.",
+        title: "Reset code generated",
+        description: data?.devCode
+          ? `Code generated. (Operator code: ${data.devCode})`
+          : "If an account exists, a reset code has been sent.",
       });
     } catch (error) {
       toast({
@@ -74,6 +85,7 @@ export default function Login() {
       setResetCode("");
       setNewPassword("");
       setConfirmPassword("");
+      setDevCode(null);
       toast({ title: "Password reset complete", description: "You can now sign in with your new password." });
     } catch (error) {
       toast({
@@ -172,10 +184,6 @@ export default function Login() {
                   </div>
                   <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} className="mt-1.5" placeholder="Enter your password" data-testid="input-password" />
                 </div>
-                <div>
-                  <Label htmlFor="otp" className="text-[12px]">Two-factor code <span className="text-muted-foreground">(if enabled)</span></Label>
-                  <Input id="otp" inputMode="numeric" maxLength={6} placeholder="••••••" value={otp} onChange={e => setOtp(e.target.value)} className="mt-1.5 tracking-[0.3em] font-mono" data-testid="input-otp" />
-                </div>
                 <Button type="submit" className="w-full" disabled={loading} data-testid="button-submit-signin">
                   {loading ? "Signing in…" : "Sign in"}
                 </Button>
@@ -184,19 +192,48 @@ export default function Login() {
             </TabsContent>
 
             <TabsContent value="signup">
-              <h2 className="text-xl font-semibold tracking-tight">Start your clinic on ClinicPulse</h2>
+              <h2 className="text-xl font-semibold tracking-tight">Create a patient account</h2>
               <p className="text-[13px] text-muted-foreground mt-1">
-                Free 14-day Pro trial. No card required.
+                Patient self-registration creates a portal-only account. Clinical staff accounts are created by an admin.
               </p>
-              <form className="mt-6 space-y-4" onSubmit={(e) => { e.preventDefault(); toast({ title: "Account created", description: "Welcome to ClinicPulse — redirecting…" }); setTimeout(() => setLocation("/"), 800); }}>
+              <form
+                className="mt-6 space-y-4"
+                onSubmit={async e => {
+                  e.preventDefault();
+                  if (!suFirstName || !suLastName || !suEmail || suPassword.length < 8) {
+                    toast({ title: "Check your details", description: "All fields are required and password must be at least 8 characters.", variant: "destructive" });
+                    return;
+                  }
+                  setSuLoading(true);
+                  try {
+                    await apiRequest("POST", "/api/auth/signup", {
+                      email: suEmail,
+                      password: suPassword,
+                      fullName: `${suFirstName} ${suLastName}`.trim(),
+                    });
+                    toast({ title: "Account created", description: "You can now sign in." });
+                    setEmail(suEmail);
+                    setPassword(suPassword);
+                    setActiveTab("signin");
+                    setSuFirstName(""); setSuLastName(""); setSuEmail(""); setSuPassword("");
+                  } catch (err) {
+                    toast({
+                      title: "Signup failed",
+                      description: err instanceof Error ? err.message.replace(/^\d+:\s*/, "") : "Please try again.",
+                      variant: "destructive",
+                    });
+                  } finally {
+                    setSuLoading(false);
+                  }
+                }}
+              >
                 <div className="grid grid-cols-2 gap-3">
-                  <div><Label className="text-[12px]">First name</Label><Input className="mt-1.5" placeholder="Sara" /></div>
-                  <div><Label className="text-[12px]">Last name</Label><Input className="mt-1.5" placeholder="Khan" /></div>
+                  <div><Label className="text-[12px]">First name</Label><Input className="mt-1.5" placeholder="Sara" value={suFirstName} onChange={e => setSuFirstName(e.target.value)} /></div>
+                  <div><Label className="text-[12px]">Last name</Label><Input className="mt-1.5" placeholder="Khan" value={suLastName} onChange={e => setSuLastName(e.target.value)} /></div>
                 </div>
-                <div><Label className="text-[12px]">Clinic name</Label><Input className="mt-1.5" placeholder="ClinicPulse Health" /></div>
-                <div><Label className="text-[12px]">Work email</Label><Input className="mt-1.5" type="email" placeholder="you@clinic.com" /></div>
-                <div><Label className="text-[12px]">Password</Label><Input className="mt-1.5" type="password" /></div>
-                <Button type="submit" className="w-full">Create workspace</Button>
+                <div><Label className="text-[12px]">Email</Label><Input className="mt-1.5" type="email" placeholder="you@example.com" value={suEmail} onChange={e => setSuEmail(e.target.value)} /></div>
+                <div><Label className="text-[12px]">Password</Label><Input className="mt-1.5" type="password" value={suPassword} onChange={e => setSuPassword(e.target.value)} placeholder="At least 8 characters" /></div>
+                <Button type="submit" className="w-full" disabled={suLoading}>{suLoading ? "Creating…" : "Create account"}</Button>
               </form>
             </TabsContent>
 
@@ -238,7 +275,10 @@ export default function Login() {
                   <div className="rounded-lg border border-primary/20 bg-primary/10 p-3 text-[12px] text-primary flex gap-2">
                     <MailCheck className="h-4 w-4 shrink-0 mt-0.5" />
                     <div>
-                      Code sent to <span className="font-medium">{resetEmail}</span>.
+                      Code generated for <span className="font-medium">{resetEmail}</span>.
+                      {devCode && (
+                        <div className="mt-1 text-[11px]">Operator code: <code className="font-mono select-all">{devCode}</code></div>
+                      )}
                     </div>
                   </div>
                   <div>

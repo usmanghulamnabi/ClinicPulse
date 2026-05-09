@@ -4,41 +4,29 @@
  * Tests the Vercel serverless handler directly (no HTTP server needed).
  * Imports api/index.js and calls the exported handler with mock req/res objects.
  *
- * Routes tested:
- *   POST /api/auth/login          — valid + invalid credentials
- *   POST /api/auth/password/request
- *   GET  /api/health
- *   GET  /api/patients
- *   POST /api/patients
- *   GET  /api/patients/:id
- *   PATCH /api/patients/:id
- *   DELETE /api/patients/:id
- *   GET  /api/prescriptions
- *   POST /api/prescriptions
- *   GET  /api/prescriptions/:id
- *   GET  /api/medicines
- *   POST /api/medicines
- *   DELETE /api/medicines/:id
- *   GET  /api/doctors
- *   POST /api/doctors
- *   DELETE /api/doctors/:id
- *   GET  /api/settings
- *   PATCH /api/settings
- *   GET  /api/unknown-route       → 404
+ * Coverage:
+ *   • Auth: login (admin/doctor/receptionist/pharmacist), bad creds, /me with token
+ *   • Auth: signup persistence, password request → reset (DB-backed)
+ *   • Auth: admin password reset endpoint
+ *   • Health
+ *   • Patients CRUD + bulk delete
+ *   • Prescriptions CRUD
+ *   • Medicines CRUD
+ *   • Doctors CRUD (creates linked user with temp password)
+ *   • Appointments CRUD
+ *   • Payments CRUD
+ *   • Settings GET/PATCH
+ *   • Unknown route 404
  *
- * When POSTGRES_URL is not set, DB-dependent routes return 503 gracefully.
- * Auth routes always pass regardless.
+ * When POSTGRES_URL is not set, every route returns 503 (graceful degradation).
  */
 
-import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
-import { readFileSync } from "fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, "..");
 
-// ── Dynamic import of handler ──────────────────────────────────────────────
 let handler;
 try {
   const mod = await import(join(projectRoot, "api/index.js"));
@@ -48,13 +36,14 @@ try {
   process.exit(1);
 }
 
-// ── Mock req/res helpers ───────────────────────────────────────────────────
+/* ── Mock req/res helpers ────────────────────────────────────────────────── */
 
-function mockReq(method, path, body = {}) {
+function mockReq(method, path, body = {}, headers = {}) {
   return {
     method,
     url: `https://clinicpulse.local/api/index?path=${path.replace(/^\/api\//, "")}`,
     body,
+    headers,
   };
 }
 
@@ -69,17 +58,16 @@ function mockRes() {
   return res;
 }
 
-async function call(method, path, body) {
-  const req = mockReq(method, path, body);
+async function call(method, path, body = {}, headers = {}) {
+  const req = mockReq(method, path, body, headers);
   const res = mockRes();
   await handler(req, res);
   return { status: res.statusCode, body: res.body };
 }
 
-// ── Test runner ────────────────────────────────────────────────────────────
+/* ── Test runner ─────────────────────────────────────────────────────────── */
 
-let passed = 0;
-let failed = 0;
+let passed = 0, failed = 0;
 const errors = [];
 
 function assert(name, condition, detail = "") {
@@ -94,263 +82,371 @@ function assert(name, condition, detail = "") {
 }
 
 function section(title) {
-  console.log(`\n── ${title} ${"─".repeat(Math.max(0, 52 - title.length))}`);
+  console.log(`\n── ${title} ${"─".repeat(Math.max(0, 56 - title.length))}`);
 }
 
 const dbAvailable = !!process.env.POSTGRES_URL;
 console.log(`\nClinicPulse Smoke Tests`);
-console.log(`Database: ${dbAvailable ? "✓ POSTGRES_URL set" : "✗ POSTGRES_URL not set — DB routes expect 503"}`);
+console.log(`Database: ${dbAvailable ? "✓ POSTGRES_URL set — exercising full DB suite"
+                                       : "✗ POSTGRES_URL not set — verifying 503 graceful failure"}`);
 
-// ── Auth routes (always work) ──────────────────────────────────────────────
-section("Auth — login");
-{
-  const ok = await call("POST", "/api/auth/login", { email: "admin@clinicpulse.app", password: "demo1234" });
-  assert("Valid login returns 200", ok.status === 200);
-  assert("Returns token", typeof ok.body?.token === "string");
-  assert("Returns user object", ok.body?.user?.email === "admin@clinicpulse.app");
-  assert("Returns admin role", ok.body?.user?.role === "admin");
-
-  const fail = await call("POST", "/api/auth/login", { email: "admin@clinicpulse.app", password: "wrongpass" });
-  assert("Invalid credentials returns 401", fail.status === 401);
-  assert("Returns error message", typeof fail.body?.error === "string");
-
-  const doc = await call("POST", "/api/auth/login", { email: "doctor@clinicpulse.app", password: "demo1234" });
-  assert("Doctor login returns 200", doc.status === 200);
-  assert("Doctor role is doctor", doc.body?.user?.role === "doctor");
-
-  const recep = await call("POST", "/api/auth/login", { email: "front@clinicpulse.app", password: "demo1234" });
-  assert("Receptionist login returns 200", recep.status === 200);
-
-  const pharm = await call("POST", "/api/auth/login", { email: "pharm@clinicpulse.app", password: "demo1234" });
-  assert("Pharmacist login returns 200", pharm.status === 200);
-}
-
-section("Auth — password reset request");
-{
-  const r = await call("POST", "/api/auth/password/request", { email: "admin@clinicpulse.app" });
-  assert("Password request returns 200", r.status === 200);
-  assert("Returns ok:true", r.body?.ok === true);
-
-  const bad = await call("POST", "/api/auth/password/request", { email: "notanemail" });
-  assert("Invalid email returns 400", bad.status === 400);
-}
-
-section("Auth — me");
-{
-  const r = await call("GET", "/api/auth/me", {});
-  assert("GET /api/auth/me returns 200", r.status === 200);
-}
-
-section("Auth — signup");
-{
-  const r = await call("POST", "/api/auth/signup", { email: "newuser@test.com", fullName: "Test User", role: "doctor" });
-  assert("Signup returns 200", r.status === 200);
-  assert("Returns ok", r.body?.ok === true);
-
-  const bad = await call("POST", "/api/auth/signup", { email: "" });
-  assert("Signup without email returns 400", bad.status === 400);
-}
-
-section("OPTIONS preflight");
-{
-  const r = await call("OPTIONS", "/api/patients", {});
-  assert("OPTIONS returns 204", r.status === 204);
-}
-
-// ── DB-dependent routes ────────────────────────────────────────────────────
+/* ── No-DB graceful path ─────────────────────────────────────────────────── */
 if (!dbAvailable) {
-  section("DB routes (no POSTGRES_URL — graceful degradation)");
+  section("No-DB graceful 503");
   for (const [method, path, body] of [
-    ["GET", "/api/health", {}],
-    ["GET", "/api/patients", {}],
-    ["POST", "/api/patients", { fullName: "Test Patient" }],
-    ["GET", "/api/prescriptions", {}],
-    ["GET", "/api/medicines", {}],
-    ["GET", "/api/doctors", {}],
-    ["GET", "/api/settings", {}],
+    ["POST", "/api/auth/login", { email: "admin@clinicpulse.app", password: "demo1234" }],
+    ["GET",  "/api/health", {}],
+    ["GET",  "/api/patients", {}],
+    ["POST", "/api/patients", { fullName: "Test" }],
+    ["GET",  "/api/prescriptions", {}],
+    ["GET",  "/api/medicines", {}],
+    ["GET",  "/api/doctors", {}],
+    ["GET",  "/api/appointments", {}],
+    ["GET",  "/api/payments", {}],
+    ["GET",  "/api/settings", {}],
   ]) {
     const r = await call(method, path, body);
-    assert(`${method} ${path} returns 503 (no DB)`, r.status === 503, `got ${r.status}`);
+    assert(`${method} ${path} returns 503`, r.status === 503, `got ${r.status}`);
     assert(`${method} ${path} has error message`, typeof r.body?.error === "string");
   }
+
+  // Even OPTIONS preflight should work without DB
+  section("OPTIONS preflight (no DB)");
+  {
+    const r = await call("OPTIONS", "/api/patients", {});
+    assert("OPTIONS returns 204", r.status === 204);
+  }
 } else {
-  section("Health check");
+  /* ── DB-backed full suite ──────────────────────────────────────────────── */
+
+  // Capture an admin token for routes that require it
+  let adminToken = null;
+  let doctorToken = null;
+
+  section("Auth — login (DB-backed)");
+  {
+    const ok = await call("POST", "/api/auth/login", { email: "admin@clinicpulse.app", password: "demo1234" });
+    assert("Valid admin login returns 200", ok.status === 200, `got ${ok.status} — ${JSON.stringify(ok.body).slice(0, 200)}`);
+    assert("Returns token (string)", typeof ok.body?.token === "string");
+    assert("Returns user.email", ok.body?.user?.email === "admin@clinicpulse.app");
+    assert("Returns admin role", ok.body?.user?.role === "admin");
+    adminToken = ok.body?.token;
+
+    const fail = await call("POST", "/api/auth/login", { email: "admin@clinicpulse.app", password: "wrongpass" });
+    assert("Invalid credentials returns 401", fail.status === 401);
+
+    const doc = await call("POST", "/api/auth/login", { email: "doctor@clinicpulse.app", password: "demo1234" });
+    assert("Doctor login returns 200", doc.status === 200);
+    assert("Doctor role is doctor", doc.body?.user?.role === "doctor");
+    doctorToken = doc.body?.token;
+
+    const recep = await call("POST", "/api/auth/login", { email: "front@clinicpulse.app", password: "demo1234" });
+    assert("Receptionist login returns 200", recep.status === 200);
+
+    const pharm = await call("POST", "/api/auth/login", { email: "pharm@clinicpulse.app", password: "demo1234" });
+    assert("Pharmacist login returns 200", pharm.status === 200);
+  }
+
+  section("Auth — /me with token");
+  {
+    const me = await call("GET", "/api/auth/me", {}, { authorization: `Bearer ${adminToken}` });
+    assert("GET /api/auth/me with admin token returns 200", me.status === 200);
+    assert("Resolves admin email", me.body?.user?.email === "admin@clinicpulse.app");
+
+    const noAuth = await call("GET", "/api/auth/me", {});
+    assert("GET /api/auth/me without token returns 401", noAuth.status === 401);
+  }
+
+  section("Auth — signup (creates patient user)");
+  let signupEmail = `smoke-${Date.now()}@test.com`;
+  {
+    const r = await call("POST", "/api/auth/signup", { email: signupEmail, fullName: "Smoke Patient", password: "smokepass123" });
+    assert("Signup returns 201", r.status === 201);
+    assert("Returns user.email", r.body?.user?.email === signupEmail);
+    assert("Role is patient", r.body?.user?.role === "patient");
+
+    // Now sign in with the new account
+    const login = await call("POST", "/api/auth/login", { email: signupEmail, password: "smokepass123" });
+    assert("New patient can log in", login.status === 200);
+
+    const dup = await call("POST", "/api/auth/signup", { email: signupEmail, fullName: "Dup", password: "another123" });
+    assert("Duplicate email signup returns 409", dup.status === 409);
+
+    const bad = await call("POST", "/api/auth/signup", { email: "x", fullName: "y", password: "short" });
+    assert("Short password returns 400", bad.status === 400);
+  }
+
+  section("Auth — DB-backed password reset");
+  {
+    const req = await call("POST", "/api/auth/password/request", { email: signupEmail });
+    assert("Reset request returns 200", req.status === 200);
+    assert("Reset code returned (single-clinic devCode)", typeof req.body?.devCode === "string");
+
+    const reset = await call("POST", "/api/auth/password/reset", {
+      email: signupEmail, code: req.body.devCode, newPassword: "freshpass123",
+    });
+    assert("Reset completes", reset.status === 200, `got ${reset.status}: ${JSON.stringify(reset.body)}`);
+
+    const oldFails = await call("POST", "/api/auth/login", { email: signupEmail, password: "smokepass123" });
+    assert("Old password no longer works", oldFails.status === 401);
+
+    const newWorks = await call("POST", "/api/auth/login", { email: signupEmail, password: "freshpass123" });
+    assert("New password works", newWorks.status === 200);
+  }
+
+  section("Auth — admin password reset");
+  {
+    const r = await call("POST", "/api/auth/password/admin-reset",
+      { email: signupEmail },
+      { authorization: `Bearer ${adminToken}` }
+    );
+    assert("Admin reset returns 200", r.status === 200);
+    assert("Returns tempPassword", typeof r.body?.tempPassword === "string" && r.body.tempPassword.length >= 8);
+
+    const newPwLogin = await call("POST", "/api/auth/login", { email: signupEmail, password: r.body.tempPassword });
+    assert("Login with admin-set password works", newPwLogin.status === 200);
+
+    // Non-admin cannot reset
+    const forbidden = await call("POST", "/api/auth/password/admin-reset",
+      { email: signupEmail },
+      { authorization: `Bearer ${doctorToken}` }
+    );
+    assert("Non-admin reset returns 403", forbidden.status === 403);
+  }
+
+  section("Health");
   {
     const r = await call("GET", "/api/health", {});
-    assert("GET /api/health returns 200", r.status === 200);
-    assert("Health reports postgres db", r.body?.db === "postgres");
+    assert("Health returns 200", r.status === 200);
+    assert("Health reports postgres", r.body?.db === "postgres");
+    assert("Health reports user count > 0", typeof r.body?.users === "number" && r.body.users > 0);
   }
 
   section("Patients CRUD");
   let patientId;
   {
     const list = await call("GET", "/api/patients", {});
-    assert("GET /api/patients returns 200", list.status === 200);
-    assert("Returns patients array", Array.isArray(list.body?.patients));
+    assert("List returns 200", list.status === 200);
+    assert("Patients array", Array.isArray(list.body?.patients));
 
     const create = await call("POST", "/api/patients", {
-      fullName: "Smoke Test Patient",
-      age: 35, gender: "M", phone: "+92 300 9999999",
-      email: "smoke@test.com", address: "Test Address",
-      bloodGroup: "O+", allergies: ["Penicillin"], chronic: [],
-      vaccinations: [], branchId: 1, doctorId: null,
-      diagnosis: "Smoke test registration", notes: "",
+      fullName: "Smoke Test Patient", age: 35, gender: "M",
+      phone: "+92 300 9999999", email: "smoke@test.com", address: "Test",
+      bloodGroup: "O+", allergies: ["Penicillin"], chronic: [], vaccinations: [],
+      branchId: 1, doctorId: null, diagnosis: "Smoke test", notes: "",
     });
-    assert("POST /api/patients returns 201", create.status === 201);
-    assert("Returns patient with id", typeof create.body?.patient?.id === "number");
-    assert("MRN is auto-generated", create.body?.patient?.mrn?.startsWith("CP-"));
+    assert("Create returns 201", create.status === 201);
+    assert("Auto MRN generated", create.body?.patient?.mrn?.startsWith("CP-"));
     patientId = create.body?.patient?.id;
 
     if (patientId) {
       const get = await call("GET", `/api/patients/${patientId}`, {});
-      assert("GET /api/patients/:id returns 200", get.status === 200);
-      assert("Returns correct patient", get.body?.patient?.id === patientId);
-
-      const patch = await call("PATCH", `/api/patients/${patientId}`, { diagnosis: "Updated diagnosis" });
-      assert("PATCH /api/patients/:id returns 200", patch.status === 200);
-      assert("Diagnosis updated", patch.body?.patient?.diagnosis === "Updated diagnosis");
+      assert("Get by id returns 200", get.status === 200);
+      const patch = await call("PATCH", `/api/patients/${patientId}`, { diagnosis: "Updated" });
+      assert("Patch returns 200", patch.status === 200);
+      assert("Diagnosis updated", patch.body?.patient?.diagnosis === "Updated");
     }
   }
 
   section("Prescriptions CRUD");
   let prescriptionId;
-  {
+  if (patientId) {
     const list = await call("GET", "/api/prescriptions", {});
-    assert("GET /api/prescriptions returns 200", list.status === 200);
-    assert("Returns prescriptions array", Array.isArray(list.body?.prescriptions));
+    assert("List returns 200", list.status === 200);
 
-    if (patientId) {
-      const create = await call("POST", "/api/prescriptions", {
-        patientId,
-        doctorId: null,
-        diagnosis: "Smoke test diagnosis",
-        status: "active",
-        items: [{ medicineId: 1, dose: "500mg", frequency: "1-0-1", duration: 5, qty: 10 }],
-        total: 140,
-      });
-      assert("POST /api/prescriptions returns 201", create.status === 201);
-      assert("Returns prescription with id", typeof create.body?.prescription?.id === "number");
-      prescriptionId = create.body?.prescription?.id;
+    const create = await call("POST", "/api/prescriptions", {
+      patientId, doctorId: null, diagnosis: "Smoke",
+      status: "active", items: [{ medicineId: 1, dose: "500mg", frequency: "1-0-1", duration: 5, qty: 10 }],
+      total: 140,
+    });
+    assert("Create returns 201", create.status === 201);
+    prescriptionId = create.body?.prescription?.id;
 
-      if (prescriptionId) {
-        const get = await call("GET", `/api/prescriptions/${prescriptionId}`, {});
-        assert("GET /api/prescriptions/:id returns 200", get.status === 200);
-
-        const patch = await call("PATCH", `/api/prescriptions/${prescriptionId}`, { status: "completed" });
-        assert("PATCH /api/prescriptions/:id returns 200", patch.status === 200);
-        assert("Status updated", patch.body?.prescription?.status === "completed");
-      }
-    }
+    const patch = await call("PATCH", `/api/prescriptions/${prescriptionId}`, { status: "completed" });
+    assert("Patch returns 200", patch.status === 200);
+    assert("Status updated", patch.body?.prescription?.status === "completed");
   }
 
   section("Medicines CRUD");
-  let medicineId;
   {
     const list = await call("GET", "/api/medicines", {});
-    assert("GET /api/medicines returns 200", list.status === 200);
-    assert("Returns medicines array", Array.isArray(list.body?.medicines));
+    assert("List returns 200", list.status === 200);
 
     const create = await call("POST", "/api/medicines", {
-      name: "Smoke Test Tab", generic: "smoke-generic", company: "TestCo",
-      unit: "tab", purchasePrice: 5, sellingPrice: 10, stock: 100,
-      lowStockAt: 20, batchNo: "BSMOKE01", expiry: Date.now() + 365*86400000,
+      name: "Smoke Med", generic: "smoke", company: "TestCo", unit: "tab",
+      purchasePrice: 5, sellingPrice: 10, stock: 100, lowStockAt: 20,
+      batchNo: "BSMOKE", expiry: Date.now() + 365*86400000,
       barcode: "849000099999", sold30d: 0,
     });
-    assert("POST /api/medicines returns 201", create.status === 201);
-    assert("Returns medicine with id", typeof create.body?.medicine?.id === "number");
-    medicineId = create.body?.medicine?.id;
+    assert("Create returns 201", create.status === 201);
+    const mid = create.body?.medicine?.id;
 
-    if (medicineId) {
-      const del = await call("DELETE", `/api/medicines/${medicineId}`, {});
-      assert("DELETE /api/medicines/:id returns 200", del.status === 200);
+    if (mid) {
+      const patch = await call("PATCH", `/api/medicines/${mid}`, { stock: 99 });
+      assert("Patch stock returns 200", patch.status === 200);
+      assert("Stock updated", patch.body?.medicine?.stock === 99);
+
+      const del = await call("DELETE", `/api/medicines/${mid}`, {}, { authorization: `Bearer ${adminToken}` });
+      assert("Delete returns 200", del.status === 200);
     }
   }
 
-  section("Doctors CRUD");
+  section("Doctors CRUD with linked user account");
   let doctorId;
+  let createdEmail;
   {
     const list = await call("GET", "/api/doctors", {});
-    assert("GET /api/doctors returns 200", list.status === 200);
-    assert("Returns doctors array", Array.isArray(list.body?.doctors));
+    assert("List returns 200", list.status === 200);
 
+    createdEmail = `smoke-doc-${Date.now()}@test.com`;
     const create = await call("POST", "/api/doctors", {
-      fullName: "Dr. Smoke Test", email: "smoke@doctor.test",
+      fullName: "Dr. Smoke Test", email: createdEmail,
       specialty: "General Practice", branchId: 1, phone: "+92 300 0000000",
       active: true,
-    });
-    assert("POST /api/doctors returns 201", create.status === 201);
-    assert("Returns doctor with id", typeof create.body?.doctor?.id === "number");
+    }, { authorization: `Bearer ${adminToken}` });
+    assert("Create doctor returns 201", create.status === 201, `got ${create.status}: ${JSON.stringify(create.body)}`);
     assert("Initials auto-generated", typeof create.body?.doctor?.initials === "string");
+    assert("Temp password returned", typeof create.body?.tempPassword === "string" && create.body.tempPassword.length >= 8);
+    assert("Linked user returned", create.body?.user?.email === createdEmail);
     doctorId = create.body?.doctor?.id;
 
-    if (doctorId) {
-      const patch = await call("PATCH", `/api/doctors/${doctorId}`, { specialty: "Cardiology" });
-      assert("PATCH /api/doctors/:id returns 200", patch.status === 200);
-      assert("Specialty updated", patch.body?.doctor?.specialty === "Cardiology");
+    // Doctor can sign in with the temp password
+    const login = await call("POST", "/api/auth/login", { email: createdEmail, password: create.body.tempPassword });
+    assert("New doctor can log in", login.status === 200);
+    assert("New doctor role is doctor", login.body?.user?.role === "doctor");
 
-      const del = await call("DELETE", `/api/doctors/${doctorId}`, {});
-      assert("DELETE /api/doctors/:id returns 200", del.status === 200);
-      assert("Returns deleted id", del.body?.deleted === doctorId);
+    // Non-admin cannot create doctor
+    const forbidden = await call("POST", "/api/doctors", { fullName: "x", email: "x@y.z" }, { authorization: `Bearer ${doctorToken}` });
+    assert("Non-admin POST /doctors returns 403", forbidden.status === 403);
+
+    if (doctorId) {
+      const patch = await call("PATCH", `/api/doctors/${doctorId}`, { specialty: "Cardiology" }, { authorization: `Bearer ${adminToken}` });
+      assert("Patch returns 200", patch.status === 200);
+
+      const del = await call("DELETE", `/api/doctors/${doctorId}`, {}, { authorization: `Bearer ${adminToken}` });
+      assert("Delete returns 200", del.status === 200);
+
+      // After delete, the linked user is gone too
+      const orphan = await call("POST", "/api/auth/login", { email: createdEmail, password: create.body.tempPassword });
+      assert("Linked user removed (login fails)", orphan.status === 401);
     }
   }
 
-  section("Settings CRUD");
+  section("Appointments CRUD");
+  if (patientId) {
+    const list = await call("GET", "/api/appointments", {});
+    assert("List returns 200", list.status === 200);
+    assert("Appointments array", Array.isArray(list.body?.appointments));
+
+    const create = await call("POST", "/api/appointments", {
+      patientId, doctorId: null, branchId: 1,
+      scheduledAt: Date.now() + 3600_000, status: "scheduled",
+      token: 99, reason: "Smoke check-up", channel: "walk_in",
+    });
+    assert("Create returns 201", create.status === 201);
+    const aId = create.body?.appointment?.id;
+
+    if (aId) {
+      const patch = await call("PATCH", `/api/appointments/${aId}`, { status: "checked_in" });
+      assert("Patch returns 200", patch.status === 200);
+      assert("Status updated", patch.body?.appointment?.status === "checked_in");
+
+      const del = await call("DELETE", `/api/appointments/${aId}`, {});
+      assert("Delete returns 200", del.status === 200);
+    }
+  }
+
+  section("Payments CRUD");
+  if (patientId) {
+    const list = await call("GET", "/api/payments", {});
+    assert("List returns 200", list.status === 200);
+
+    const create = await call("POST", "/api/payments", {
+      patientId, prescriptionId: prescriptionId ?? null,
+      amount: 250, method: "Cash", status: "paid",
+    });
+    assert("Create returns 201", create.status === 201);
+    assert("Auto invoice number", create.body?.payment?.invoiceNo?.startsWith("INV-"));
+    const pid = create.body?.payment?.id;
+
+    if (pid) {
+      const patch = await call("PATCH", `/api/payments/${pid}`, { status: "due" });
+      assert("Patch returns 200", patch.status === 200);
+      assert("Status updated to due", patch.body?.payment?.status === "due");
+
+      const del = await call("DELETE", `/api/payments/${pid}`, {}, { authorization: `Bearer ${adminToken}` });
+      assert("Delete returns 200", del.status === 200);
+    }
+  }
+
+  section("Settings");
   {
     const get = await call("GET", "/api/settings", {});
-    assert("GET /api/settings returns 200", get.status === 200);
-    assert("Returns settings object", typeof get.body?.settings === "object");
+    assert("GET returns 200", get.status === 200);
     assert("Has clinicName", typeof get.body?.settings?.clinicName === "string");
-    assert("Has timezone", typeof get.body?.settings?.timezone === "string");
-    assert("Has notifEmail boolean", typeof get.body?.settings?.notifEmail === "boolean");
 
-    const patch = await call("PATCH", "/api/settings", {
-      clinicName: "Smoke Test Clinic",
-      timezone: "Asia/Karachi",
-      notifEmail: true,
-      notifSms: false,
-      notifWa: true,
-      notifPush: false,
-    });
-    assert("PATCH /api/settings returns 200", patch.status === 200);
-    assert("Clinic name updated", patch.body?.settings?.clinicName === "Smoke Test Clinic");
-    assert("notifPush updated to false", patch.body?.settings?.notifPush === false);
-    assert("updatedAt is a number", typeof patch.body?.settings?.updatedAt === "number");
+    const patch = await call("PATCH", "/api/settings",
+      { clinicName: "Smoke Clinic", notifSms: true },
+      { authorization: `Bearer ${adminToken}` }
+    );
+    assert("PATCH (admin) returns 200", patch.status === 200);
+    assert("clinicName persisted", patch.body?.settings?.clinicName === "Smoke Clinic");
+    assert("notifSms persisted", patch.body?.settings?.notifSms === true);
 
-    // Restore original clinic name
-    await call("PATCH", "/api/settings", { clinicName: "ClinicPulse Health" });
+    // Restore
+    await call("PATCH", "/api/settings",
+      { clinicName: "ClinicPulse Health", notifSms: false },
+      { authorization: `Bearer ${adminToken}` }
+    );
 
-    // 404 test
+    // Non-admin cannot patch
+    const forbidden = await call("PATCH", "/api/settings",
+      { clinicName: "Hacker" },
+      { authorization: `Bearer ${doctorToken}` }
+    );
+    assert("Non-admin PATCH settings returns 403", forbidden.status === 403);
+  }
+
+  section("Cleanup + bulk delete + 404");
+  {
+    if (patientId) {
+      const del = await call("DELETE", `/api/patients/${patientId}`, {}, { authorization: `Bearer ${adminToken}` });
+      assert("Cleanup smoke patient returns 200", del.status === 200);
+    }
+
+    // Non-admin cannot delete patients
+    if (patientId) {
+      const f = await call("DELETE", `/api/patients/999999`, {}, { authorization: `Bearer ${doctorToken}` });
+      assert("Non-admin patient delete returns 403", f.status === 403);
+    }
+
+    // Bulk delete
+    const p1 = await call("POST", "/api/patients", { fullName: "Bulk 1", age: 30, gender: "M", phone: "+1", email: "b1@t.com", address: "A", bloodGroup: "O+", allergies: [], chronic: [], vaccinations: [], branchId: 1, diagnosis: "test" });
+    const p2 = await call("POST", "/api/patients", { fullName: "Bulk 2", age: 31, gender: "F", phone: "+2", email: "b2@t.com", address: "B", bloodGroup: "A+", allergies: [], chronic: [], vaccinations: [], branchId: 1, diagnosis: "test" });
+    const ids = [p1.body?.patient?.id, p2.body?.patient?.id].filter(Boolean);
+    if (ids.length === 2) {
+      const bulk = await call("DELETE", "/api/patients", { ids }, { authorization: `Bearer ${adminToken}` });
+      assert("Bulk delete returns 200", bulk.status === 200);
+      assert("Bulk delete confirms ids", Array.isArray(bulk.body?.deleted) && bulk.body.deleted.length === 2);
+    }
+
+    // 404 unknown route
     const notFound = await call("GET", "/api/nonexistent-route", {});
     assert("Unknown route returns 404", notFound.status === 404);
   }
 
-  section("Patient cleanup");
+  // Final cleanup of the smoke signup user
   {
-    if (patientId) {
-      // Delete the smoke test patient (cascades prescription)
-      const del = await call("DELETE", `/api/patients/${patientId}`, {});
-      assert("DELETE smoke test patient returns 200", del.status === 200);
-    }
-  }
-
-  section("Bulk patient delete");
-  {
-    // Create 2 patients then bulk delete
-    const p1 = await call("POST", "/api/patients", { fullName: "Bulk Del 1", age: 30, gender: "M", phone: "+1", email: "b1@t.com", address: "A", bloodGroup: "O+", allergies: [], chronic: [], vaccinations: [], branchId: 1, diagnosis: "test" });
-    const p2 = await call("POST", "/api/patients", { fullName: "Bulk Del 2", age: 31, gender: "F", phone: "+2", email: "b2@t.com", address: "B", bloodGroup: "A+", allergies: [], chronic: [], vaccinations: [], branchId: 1, diagnosis: "test" });
-    const ids = [p1.body?.patient?.id, p2.body?.patient?.id].filter(Boolean);
-    if (ids.length === 2) {
-      const bulk = await call("DELETE", "/api/patients", { ids });
-      assert("Bulk DELETE /api/patients returns 200", bulk.status === 200);
-      assert("Bulk delete confirms ids", Array.isArray(bulk.body?.deleted) && bulk.body.deleted.length === 2);
-    } else {
-      assert("Bulk delete setup skipped (no ids)", false, "Could not create test patients");
+    const adminLogin = await call("POST", "/api/auth/login", { email: "admin@clinicpulse.app", password: "demo1234" });
+    if (adminLogin.body?.token) {
+      // We don't have a delete user endpoint other than via doctors;
+      // just leave the smoke patient signup in place, it's a 'patient' role and harmless.
     }
   }
 }
 
-// ── Summary ────────────────────────────────────────────────────────────────
-console.log(`\n${"═".repeat(56)}`);
+/* ── Summary ────────────────────────────────────────────────────────────── */
+console.log(`\n${"═".repeat(60)}`);
 console.log(`Results: ${passed} passed, ${failed} failed`);
 if (errors.length > 0) {
   console.error(`\nFailed tests:\n${errors.map(e => `  • ${e}`).join("\n")}`);

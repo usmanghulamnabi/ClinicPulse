@@ -115,7 +115,7 @@ export default function Help() {
         <CardContent className="pt-6">
           <Badge variant="outline" className="mb-2 border-amber-300">Important</Badge>
           <p className="text-sm">
-            ClinicPulse is a productivity tool. AI features (insights, drug interactions, refill predictions, transcription) are <strong>assistive demos</strong> and must not be used as the sole basis for clinical decisions.
+            ClinicPulse is a productivity tool. AI features (insights, drug interactions, refill predictions, transcription) are <strong>assistive only</strong> and must not be used as the sole basis for clinical decisions.
           </p>
         </CardContent>
       </Card>

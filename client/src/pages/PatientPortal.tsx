@@ -26,7 +26,7 @@ export default function PatientPortal() {
         title="Patient Portal"
         subtitle="A read-only preview of what your patients see when they log in."
         actions={
-          <Badge variant="outline" className="gap-1"><AlertCircle className="h-3 w-3"/>Demo view — not real PHI</Badge>
+          <Badge variant="outline" className="gap-1"><AlertCircle className="h-3 w-3"/>Read-only preview</Badge>
         }
       />
 

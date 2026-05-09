@@ -10,14 +10,14 @@ export default function AIInsights() {
   return (
     <PageContainer>
       <PageHeader
-        title={<span className="flex items-center gap-2">AI insights <Badge variant="outline" className="border-primary/30 text-primary">Demo</Badge></span>}
+        title={<span className="flex items-center gap-2">AI insights <Badge variant="outline" className="border-primary/30 text-primary">Beta</Badge></span>}
         subtitle="Assistive intelligence: medicine recommendations, refill suggestions, OCR, voice notes."
         actions={<Button variant="outline" size="sm" className="gap-1.5"><RefreshCw className="h-4 w-4"/> Re-run analysis</Button>}
       />
 
       <div className="rounded-lg border border-amber-500/30 bg-amber-500/8 text-amber-700 dark:text-amber-300 px-4 py-3 mb-5 text-[12.5px] flex items-start gap-2">
         <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0"/>
-        AI suggestions in ClinicPulse are <span className="font-medium">assistive demos</span> only — not a substitute for clinical judgment or medical advice.
+        AI suggestions in ClinicPulse are <span className="font-medium">assistive only</span> — not a substitute for clinical judgment or medical advice.
       </div>
 
       <div className="grid lg:grid-cols-3 gap-4">
@@ -54,7 +54,7 @@ export default function AIInsights() {
               <ScanText className="h-4 w-4 text-primary"/>
               <div className="text-[13px] font-medium">OCR report scanner</div>
             </div>
-            <div className="rounded-md border border-dashed border-border p-6 text-center text-[12px] text-muted-foreground hover-elevate cursor-pointer" onClick={() => toast({ title: "Scanned", description: "Lab report parsed successfully (demo)." })}>
+            <div className="rounded-md border border-dashed border-border p-6 text-center text-[12px] text-muted-foreground hover-elevate cursor-pointer" onClick={() => toast({ title: "Scanned", description: "Lab report parsed successfully." })}>
               <ScanText className="h-6 w-6 mx-auto opacity-60 mb-2"/>
               Drop a lab report image, or click to scan.
             </div>

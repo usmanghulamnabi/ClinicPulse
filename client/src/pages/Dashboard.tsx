@@ -422,7 +422,7 @@ export default function Dashboard() {
             ))}
           </div>
           <p className="mt-4 text-[11px] text-muted-foreground">
-            Assistive demo only. Verify all clinical and operational suggestions before use.
+            Assistive only. Verify all clinical and operational suggestions before acting.
           </p>
         </Card>
       </div>

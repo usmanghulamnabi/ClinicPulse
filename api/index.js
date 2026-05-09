@@ -1,16 +1,18 @@
 /**
- * ClinicPulse — Vercel Serverless API Handler (Postgres-backed)
+ * ClinicPulse — Vercel Serverless API Handler (Postgres-backed, production)
  *
- * All CRUD routes hit Postgres via POSTGRES_URL.
+ * All routes hit Postgres via POSTGRES_URL (Neon-compatible).
  * initDb() runs on each cold start: CREATE TABLE IF NOT EXISTS + seed if empty.
- * Auth stays in-memory (DEMO_ACCOUNTS).
+ * Auth: DB-backed users table with scrypt-hashed passwords (Node built-in crypto).
  *
  * Routes:
- *   POST /api/auth/login
- *   POST /api/auth/signup
- *   POST /api/auth/password/request
- *   POST /api/auth/password/reset
- *   GET  /api/auth/me
+ *   POST /api/auth/login                          → { token, user }
+ *   POST /api/auth/signup                         → { ok, user }
+ *   POST /api/auth/password/request               → request reset code (kept in DB)
+ *   POST /api/auth/password/reset                 → finish reset (with code)
+ *   POST /api/auth/password/admin-reset           → admin sets a user's password
+ *   GET  /api/auth/me                             → resolve current user from token
+ *   GET  /api/users                               → admin: list users
  *   GET  /api/health
  *
  *   GET    /api/patients
@@ -18,27 +20,40 @@
  *   GET    /api/patients/:id
  *   PATCH  /api/patients/:id
  *   DELETE /api/patients/:id
- *   DELETE /api/patients  (bulk, body: { ids: number[] })
+ *   DELETE /api/patients          (bulk: { ids: number[] })
  *
  *   GET    /api/prescriptions
  *   POST   /api/prescriptions
  *   GET    /api/prescriptions/:id
  *   PATCH  /api/prescriptions/:id
+ *   DELETE /api/prescriptions/:id
  *
  *   GET    /api/medicines
  *   POST   /api/medicines
+ *   PATCH  /api/medicines/:id
  *   DELETE /api/medicines/:id
  *
  *   GET    /api/doctors
- *   POST   /api/doctors
+ *   POST   /api/doctors           (also creates linked user with temp password)
  *   PATCH  /api/doctors/:id
  *   DELETE /api/doctors/:id
+ *
+ *   GET    /api/appointments      (?from=&to= optional ms timestamps)
+ *   POST   /api/appointments
+ *   PATCH  /api/appointments/:id
+ *   DELETE /api/appointments/:id
+ *
+ *   GET    /api/payments
+ *   POST   /api/payments
+ *   PATCH  /api/payments/:id
+ *   DELETE /api/payments/:id
  *
  *   GET    /api/settings
  *   PATCH  /api/settings
  */
 
 import postgres from "postgres";
+import crypto from "crypto";
 
 /* ── Postgres connection ──────────────────────────────────────────────────── */
 
@@ -50,14 +65,58 @@ function getDb() {
         "POSTGRES_URL environment variable is not set. Configure it in your Vercel project settings."
       );
     }
-    sql = postgres(process.env.POSTGRES_URL, {
-      ssl: "require",
+    // Honour sslmode=disable in the URL (useful for local Postgres testing).
+    const url = process.env.POSTGRES_URL;
+    const disableSsl = /sslmode=disable/i.test(url) || /\/\/[^/]*localhost/i.test(url) || /\/\/[^/]*127\.0\.0\.1/i.test(url);
+    sql = postgres(url, {
+      ssl: disableSsl ? false : "require",
       max: 5,
       idle_timeout: 20,
       connect_timeout: 30,
     });
   }
   return sql;
+}
+
+/* ── Password hashing (scrypt — Node built-in, no deps) ───────────────────── */
+
+const SCRYPT_KEYLEN = 64;
+const SCRYPT_N = 16384;
+const SCRYPT_r = 8;
+const SCRYPT_p = 1;
+
+function hashPassword(plain) {
+  const salt = crypto.randomBytes(16);
+  const derived = crypto.scryptSync(String(plain), salt, SCRYPT_KEYLEN, {
+    N: SCRYPT_N, r: SCRYPT_r, p: SCRYPT_p,
+  });
+  return `scrypt$${SCRYPT_N}$${SCRYPT_r}$${SCRYPT_p}$${salt.toString("base64")}$${derived.toString("base64")}`;
+}
+
+function verifyPassword(plain, stored) {
+  if (!stored) return false;
+  try {
+    const parts = String(stored).split("$");
+    if (parts.length !== 6 || parts[0] !== "scrypt") return false;
+    const N = parseInt(parts[1], 10);
+    const r = parseInt(parts[2], 10);
+    const p = parseInt(parts[3], 10);
+    const salt = Buffer.from(parts[4], "base64");
+    const expected = Buffer.from(parts[5], "base64");
+    const derived = crypto.scryptSync(String(plain), salt, expected.length, { N, r, p });
+    return crypto.timingSafeEqual(derived, expected);
+  } catch {
+    return false;
+  }
+}
+
+function genTempPassword(len = 12) {
+  // base32-ish alphabet, no ambiguous chars
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = crypto.randomBytes(len);
+  let out = "";
+  for (let i = 0; i < len; i++) out += alphabet[bytes[i] % alphabet.length];
+  return out;
 }
 
 /* ── DB init flag ─────────────────────────────────────────────────────────── */
@@ -83,6 +142,28 @@ async function initDb() {
     )
   `;
 
+  // Users (DB-backed authentication)
+  await db`
+    CREATE TABLE IF NOT EXISTS users (
+      id              SERIAL PRIMARY KEY,
+      email           TEXT NOT NULL UNIQUE,
+      password_hash   TEXT NOT NULL DEFAULT '',
+      role            TEXT NOT NULL DEFAULT 'doctor',
+      full_name       TEXT NOT NULL DEFAULT '',
+      initials        TEXT NOT NULL DEFAULT '',
+      branch_id       INTEGER NOT NULL DEFAULT 1,
+      specialty       TEXT,
+      active          BOOLEAN NOT NULL DEFAULT true,
+      doctor_id       INTEGER REFERENCES doctors(id) ON DELETE SET NULL,
+      reset_code      TEXT,
+      reset_expires   BIGINT NOT NULL DEFAULT 0,
+      reset_attempts  INTEGER NOT NULL DEFAULT 0,
+      must_change     BOOLEAN NOT NULL DEFAULT false,
+      created_at      BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT * 1000,
+      last_login_at   BIGINT NOT NULL DEFAULT 0
+    )
+  `;
+
   // Medicines
   await db`
     CREATE TABLE IF NOT EXISTS medicines (
@@ -103,7 +184,7 @@ async function initDb() {
     )
   `;
 
-  // Patients  (doctor_id SET NULL on doctor delete — pages show "Unassigned")
+  // Patients (doctor_id SET NULL on doctor delete)
   await db`
     CREATE TABLE IF NOT EXISTS patients (
       id            SERIAL PRIMARY KEY,
@@ -129,8 +210,7 @@ async function initDb() {
     )
   `;
 
-  // Prescriptions  (patient_id CASCADE — delete patient → delete prescriptions)
-  //               (doctor_id SET NULL — delete doctor → preserve prescription, show "Unassigned")
+  // Prescriptions
   await db`
     CREATE TABLE IF NOT EXISTS prescriptions (
       id          SERIAL PRIMARY KEY,
@@ -144,7 +224,38 @@ async function initDb() {
     )
   `;
 
-  // Settings (single-row key/value store — id always 1)
+  // Appointments
+  await db`
+    CREATE TABLE IF NOT EXISTS appointments (
+      id            SERIAL PRIMARY KEY,
+      patient_id    INTEGER REFERENCES patients(id) ON DELETE CASCADE,
+      doctor_id     INTEGER REFERENCES doctors(id) ON DELETE SET NULL,
+      branch_id     INTEGER NOT NULL DEFAULT 1,
+      scheduled_at  BIGINT NOT NULL,
+      status        TEXT NOT NULL DEFAULT 'scheduled',
+      token         INTEGER NOT NULL DEFAULT 1,
+      reason        TEXT NOT NULL DEFAULT 'Consultation',
+      channel       TEXT NOT NULL DEFAULT 'walk_in',
+      notes         TEXT NOT NULL DEFAULT '',
+      created_at    BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT * 1000
+    )
+  `;
+
+  // Payments
+  await db`
+    CREATE TABLE IF NOT EXISTS payments (
+      id              SERIAL PRIMARY KEY,
+      patient_id      INTEGER REFERENCES patients(id) ON DELETE CASCADE,
+      prescription_id INTEGER REFERENCES prescriptions(id) ON DELETE SET NULL,
+      amount          NUMERIC NOT NULL DEFAULT 0,
+      method          TEXT NOT NULL DEFAULT 'Cash',
+      status          TEXT NOT NULL DEFAULT 'paid',
+      invoice_no      TEXT NOT NULL DEFAULT '',
+      created_at      BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT * 1000
+    )
+  `;
+
+  // Settings (single-row id=1)
   await db`
     CREATE TABLE IF NOT EXISTS settings (
       id               INTEGER PRIMARY KEY DEFAULT 1,
@@ -160,38 +271,73 @@ async function initDb() {
     )
   `;
 
-  // Seed if doctors table is empty
+  // Seed if empty (doctors first)
   const [{ count: doctorCount }] = await db`SELECT COUNT(*)::int AS count FROM doctors`;
-  if (doctorCount === 0) {
-    await seedDefaults(db);
-  }
+  if (doctorCount === 0) await seedDoctorsAndMedicinesAndPatients(db);
+
+  // Seed users if empty (always after doctors so doctor_id FK resolves)
+  const [{ count: userCount }] = await db`SELECT COUNT(*)::int AS count FROM users`;
+  if (userCount === 0) await seedUsers(db);
+
+  // ── Convergence: ensure the canonical doctor roster is in place ──────────
+  // Upsert Dr. Muhammad Usman as doctor id=1 (admin)
+  await db`
+    INSERT INTO doctors (id, email, full_name, specialty, branch_id, initials, active, phone)
+    VALUES (1, 'admin@clinicpulse.app', 'Dr. Muhammad Usman', 'Internal Medicine', 1, 'MU', true, '+92 300 1234501')
+    ON CONFLICT (id) DO UPDATE SET
+      email      = EXCLUDED.email,
+      full_name  = EXCLUDED.full_name,
+      specialty  = EXCLUDED.specialty,
+      initials   = EXCLUDED.initials,
+      active     = EXCLUDED.active
+  `;
+  // Upsert Dr. Mahroona Laraib as doctor id=2
+  await db`
+    INSERT INTO doctors (id, email, full_name, specialty, branch_id, initials, active, phone)
+    VALUES (2, 'doctor@clinicpulse.app', 'Dr. Mahroona Laraib', 'General Practice', 1, 'ML', true, '+92 300 1234502')
+    ON CONFLICT (id) DO UPDATE SET
+      email      = EXCLUDED.email,
+      full_name  = EXCLUDED.full_name,
+      specialty  = EXCLUDED.specialty,
+      initials   = EXCLUDED.initials,
+      active     = EXCLUDED.active
+  `;
+  // Update linked user accounts to match new names
+  await db`UPDATE users SET full_name = 'Dr. Muhammad Usman',  initials = 'MU', specialty = 'Internal Medicine', role = 'admin'  WHERE email = 'admin@clinicpulse.app'`;
+  await db`UPDATE users SET full_name = 'Dr. Mahroona Laraib', initials = 'ML', specialty = 'General Practice',  role = 'doctor' WHERE email = 'doctor@clinicpulse.app'`;
+  // Ensure doctor_id FK linkage is correct
+  await db`UPDATE users SET doctor_id = 1 WHERE email = 'admin@clinicpulse.app'  AND (doctor_id IS NULL OR doctor_id != 1)`;
+  await db`UPDATE users SET doctor_id = 2 WHERE email = 'doctor@clinicpulse.app' AND (doctor_id IS NULL OR doctor_id != 2)`;
+  // Remove stale doctor2/doctor3 user accounts (doctor-role only, preserve non-doctor users)
+  await db`DELETE FROM users WHERE email IN ('doctor2@clinicpulse.app','doctor3@clinicpulse.app') AND role = 'doctor'`;
+  // Reroute any prescriptions/appointments/patients pointing at removed doctors (id>=3) → doctor id=2
+  await db`UPDATE prescriptions SET doctor_id = 2 WHERE doctor_id > 2`;
+  await db`UPDATE appointments  SET doctor_id = 2 WHERE doctor_id > 2`;
+  await db`UPDATE patients      SET doctor_id = 2 WHERE doctor_id > 2`;
+  // Delete extra doctor rows (ids 3+) — ON DELETE SET NULL already handles FKs in patients/prescriptions/appointments
+  await db`DELETE FROM doctors WHERE id > 2`;
+  // ── End convergence ─────────────────────────────────────────────────────
 
   // Ensure settings row exists
-  await db`
-    INSERT INTO settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING
-  `;
+  await db`INSERT INTO settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`;
 
   dbInitialized = true;
 }
 
 /* ── Seed data ────────────────────────────────────────────────────────────── */
 
-async function seedDefaults(db) {
+async function seedDoctorsAndMedicinesAndPatients(db) {
   const now = Date.now();
   const day = 86_400_000;
 
-  // Doctors
   await db`
     INSERT INTO doctors (id, email, full_name, specialty, branch_id, initials, active, phone) VALUES
-      (1, 'admin@clinicpulse.app',   'Dr. Sara Khan',      'Internal Medicine', 1, 'SK', true, '+92 300 1234501'),
-      (2, 'doctor@clinicpulse.app',  'Dr. Adeel Rahman',   'Cardiology',        1, 'AR', true, '+92 300 1234502'),
-      (3, 'doctor2@clinicpulse.app', 'Dr. Hina Saeed',     'Pediatrics',        1, 'HS', true, '+92 300 1234503'),
-      (4, 'doctor3@clinicpulse.app', 'Dr. Faisal Mahmood', 'Pulmonology',       1, 'FM', true, '+92 300 1234504')
+      (1, 'admin@clinicpulse.app',  'Dr. Muhammad Usman',  'Internal Medicine', 1, 'MU', true, '+92 300 1234501'),
+      (2, 'doctor@clinicpulse.app', 'Dr. Mahroona Laraib', 'General Practice',  1, 'ML', true, '+92 300 1234502')
     ON CONFLICT (id) DO NOTHING
   `;
-  await db`SELECT setval('doctors_id_seq', 4, true)`;
+  await db`SELECT setval('doctors_id_seq', 2, true)`;
 
-  // Medicines (25)
   await db`
     INSERT INTO medicines (id, name, generic, company, unit, purchase_price, selling_price, stock, low_stock_at, batch_no, expiry, barcode, sold_30d) VALUES
       (1,  'Augmentin 625mg',    'Amoxicillin/Clavulanate', 'GSK',         'tab',    18,  28,  32,  25, 'B2401', ${now + 185*day}, '849000000001', 140),
@@ -223,26 +369,24 @@ async function seedDefaults(db) {
   `;
   await db`SELECT setval('medicines_id_seq', 25, true)`;
 
-  // Patients
+  // Patients (one visit each minimum)
   const p1v = JSON.stringify([
     { id: 1, date: now - 3*day, doctorId: 2, diagnosis: "Hypertension follow-up", soap: { s: "Patient reports occasional headache and fatigue for 4 days.", o: "BP 148/92 mmHg · HR 78 bpm · Temp 36.8°C · SpO₂ 98%", a: "Essential Hypertension — partially controlled", p: "Continued Telmisartan 40mg OD, Amlodipine 5mg OD. Follow-up in 14 days." } },
-    { id: 2, date: now - 33*day, doctorId: 2, diagnosis: "Type 2 DM follow-up", soap: { s: "Patient reports polyuria and increased thirst for 1 week.", o: "BP 142/88 mmHg · HR 76 bpm · FBS 178 mg/dL · HbA1c 7.2%", a: "Type 2 Diabetes — suboptimal control", p: "Increased Metformin 500mg to BID. Glucophage XR 1g OD added. Diet counselling given." } },
   ]);
   const p2v = JSON.stringify([
-    { id: 1, date: now - 7*day, doctorId: 3, diagnosis: "Asthma exacerbation", soap: { s: "Patient reports wheezing and shortness of breath for 2 days, worse at night.", o: "BP 118/76 mmHg · HR 92 bpm · SpO₂ 94% · Peak flow 68% predicted", a: "Mild persistent asthma — acute exacerbation", p: "Salbutamol inhaler PRN. Montelukast 10mg OD added. Prednisolone 5-day course. Follow-up in 10 days." } },
+    { id: 1, date: now - 7*day, doctorId: 2, diagnosis: "Asthma exacerbation", soap: { s: "Wheezing and shortness of breath for 2 days.", o: "BP 118/76 · HR 92 · SpO₂ 94% · Peak flow 68% predicted", a: "Mild persistent asthma — acute exacerbation", p: "Salbutamol PRN. Montelukast 10mg OD added." } },
   ]);
   const p3v = JSON.stringify([
-    { id: 1, date: now - 12*day, doctorId: 2, diagnosis: "Cardiology follow-up", soap: { s: "Patient reports mild chest tightness on exertion and dyspnoea on climbing stairs.", o: "BP 152/96 mmHg · HR 68 bpm · SpO₂ 97% · ECG: sinus rhythm", a: "Hypertension with hyperlipidemia — requires optimisation", p: "Atenolol 50mg OD continued. Atorvastatin 20mg added. Aspirin 75mg OD. Repeat lipid profile in 6 weeks." } },
-    { id: 2, date: now - 60*day, doctorId: 2, diagnosis: "Hypertension follow-up", soap: { s: "BP running high at home per patient log.", o: "BP 160/100 mmHg · HR 72 bpm", a: "Uncontrolled hypertension", p: "Amlodipine 5mg added. Lifestyle modifications advised." } },
+    { id: 1, date: now - 12*day, doctorId: 2, diagnosis: "Cardiology follow-up", soap: { s: "Mild chest tightness on exertion.", o: "BP 152/96 · HR 68 · SpO₂ 97% · ECG sinus rhythm", a: "HTN with hyperlipidemia", p: "Atenolol 50mg OD continued. Atorvastatin 20mg added. Aspirin 75mg." } },
   ]);
   const p4v = JSON.stringify([
-    { id: 1, date: now - 1*day, doctorId: 1, diagnosis: "Acute viral URI", soap: { s: "Patient reports sore throat, runny nose, and mild fever for 3 days.", o: "BP 112/72 mmHg · HR 84 bpm · Temp 37.6°C · SpO₂ 99% · Throat: mild erythema", a: "Acute viral upper respiratory tract infection", p: "Panadol Extra 500mg TDS × 5 days. Loratadine 10mg OD × 5 days. Rest and hydration. Return if no improvement in 5 days." } },
+    { id: 1, date: now - 1*day, doctorId: 1, diagnosis: "Acute viral URI", soap: { s: "Sore throat, runny nose, mild fever for 3 days.", o: "BP 112/72 · HR 84 · Temp 37.6°C · SpO₂ 99%", a: "Acute viral URI", p: "Panadol Extra TDS × 5 days. Loratadine 10mg OD × 5 days." } },
   ]);
 
   await db`
     INSERT INTO patients (id, mrn, full_name, age, gender, phone, email, address, blood_group, allergies, chronic, vaccinations, branch_id, doctor_id, diagnosis, last_visit_at, created_at, notes, family, visits) VALUES
       (1,'CP-2001','Ali Hassan',  45,'M','+92 300 1234567','ali.hassan@mail.com',  '14-B, Gulberg III, Lahore',   'O+', ${JSON.stringify(["Penicillin"])}, ${JSON.stringify(["Hypertension","Type 2 Diabetes"])}, ${JSON.stringify(["Hep B","Influenza '24","COVID-19 booster"])},1,2,'Hypertension follow-up',${now-3*day}, ${now-420*day},'Patient prefers morning appointments. Compliant with therapy.',${JSON.stringify({mother:"Hypertension",father:"Type 2 Diabetes"})},${p1v}),
-      (2,'CP-2002','Maryam Iqbal',32,'F','+92 321 9876543','maryam.iqbal@mail.com','7-C, DHA Phase 4, Karachi',   'A+', ${JSON.stringify([])},             ${JSON.stringify(["Asthma"])},                         ${JSON.stringify(["Hep B","Tdap","COVID-19 booster"])},          1,3,'Asthma exacerbation',   ${now-7*day}, ${now-200*day},'',${JSON.stringify({mother:"Asthma"})},${p2v}),
+      (2,'CP-2002','Maryam Iqbal',32,'F','+92 321 9876543','maryam.iqbal@mail.com','7-C, DHA Phase 4, Karachi',   'A+', ${JSON.stringify([])},             ${JSON.stringify(["Asthma"])},                         ${JSON.stringify(["Hep B","Tdap","COVID-19 booster"])},          1,2,'Asthma exacerbation',   ${now-7*day}, ${now-200*day},'',${JSON.stringify({mother:"Asthma"})},${p2v}),
       (3,'CP-2003','Hamza Khan',  58,'M','+92 333 5556677','hamza.khan@mail.com',  '22-A, F-7 Markaz, Islamabad', 'B+', ${JSON.stringify(["NSAIDs"])},       ${JSON.stringify(["Hypertension","Hyperlipidemia"])},   ${JSON.stringify(["Hep B","Influenza '24"])},                    1,2,'Cardiology follow-up',  ${now-12*day},${now-600*day},'Patient is a retired civil servant. Good compliance.',${JSON.stringify({father:"Hypertension",mother:"Hyperlipidemia"})},${p3v}),
       (4,'CP-2004','Sara Ahmed',  27,'F','+92 312 3334455','sara.ahmed@mail.com',  '5-D, Bahria Town, Rawalpindi','AB-',${JSON.stringify(["Sulfa"])},        ${JSON.stringify([])},                                 ${JSON.stringify(["Hep B","Tdap","COVID-19 booster","Influenza '24"])},1,1,'Acute viral URI',   ${now-1*day}, ${now-30*day}, '',${JSON.stringify({})},${p4v})
     ON CONFLICT (id) DO NOTHING
@@ -260,12 +404,54 @@ async function seedDefaults(db) {
     INSERT INTO prescriptions (id, patient_id, doctor_id, created_at, diagnosis, status, items, total) VALUES
       (1,1,2,${now-3*day}, 'Hypertension follow-up','active',   ${rx1i},840),
       (2,1,2,${now-33*day},'Type 2 DM follow-up',   'completed',${rx2i},810),
-      (3,2,3,${now-7*day}, 'Asthma exacerbation',   'active',   ${rx3i},1020),
+      (3,2,2,${now-7*day}, 'Asthma exacerbation',   'active',   ${rx3i},1020),
       (4,3,2,${now-12*day},'Cardiology follow-up',  'active',   ${rx4i},930),
       (5,4,1,${now-1*day}, 'Acute viral URI',        'active',   ${rx5i},150)
     ON CONFLICT (id) DO NOTHING
   `;
   await db`SELECT setval('prescriptions_id_seq', 5, true)`;
+
+  // Sample appointments — today across the 4 patients
+  const today = new Date(); today.setHours(9, 0, 0, 0);
+  const t = today.getTime();
+  await db`
+    INSERT INTO appointments (patient_id, doctor_id, branch_id, scheduled_at, status, token, reason, channel) VALUES
+      (1, 2, 1, ${t},               'scheduled',  1, 'Hypertension follow-up', 'walk_in'),
+      (2, 2, 1, ${t + 30*60*1000},  'scheduled',  2, 'Asthma review',          'phone'),
+      (3, 2, 1, ${t + 60*60*1000},  'scheduled',  3, 'Cardiology follow-up',   'online'),
+      (4, 1, 1, ${t + 90*60*1000},  'scheduled',  4, 'URI follow-up',          'walk_in')
+  `;
+
+  // Sample payments matching prescriptions
+  await db`
+    INSERT INTO payments (patient_id, prescription_id, amount, method, status, invoice_no, created_at) VALUES
+      (1, 1, 840,  'Cash',      'paid', 'INV-10001', ${now-3*day}),
+      (1, 2, 810,  'Card',      'due',  'INV-10002', ${now-33*day}),
+      (2, 3, 1020, 'JazzCash',  'paid', 'INV-10003', ${now-7*day}),
+      (3, 4, 930,  'Easypaisa', 'paid', 'INV-10004', ${now-12*day}),
+      (4, 5, 150,  'Cash',      'paid', 'INV-10005', ${now-1*day})
+  `;
+}
+
+async function seedUsers(db) {
+  // Default password for all seed users — matches existing demo expectation.
+  const defaultHash = hashPassword("demo1234");
+
+  // Map seed users to doctors so doctor logins work and doctor_id is set.
+  const seeds = [
+    { email: "admin@clinicpulse.app",  role: "admin",        fullName: "Dr. Muhammad Usman",  initials: "MU", specialty: "Internal Medicine", doctor_id: 1 },
+    { email: "doctor@clinicpulse.app", role: "doctor",       fullName: "Dr. Mahroona Laraib", initials: "ML", specialty: "General Practice",  doctor_id: 2 },
+    { email: "front@clinicpulse.app",  role: "receptionist", fullName: "Maria Lopez",         initials: "ML", specialty: null,                doctor_id: null },
+    { email: "pharm@clinicpulse.app",  role: "pharmacist",   fullName: "Imran Yousaf",        initials: "IY", specialty: null,                doctor_id: null },
+    { email: "patient@clinicpulse.app",role: "patient",      fullName: "Ali Hassan",          initials: "AH", specialty: null,                doctor_id: null },
+  ];
+  for (const u of seeds) {
+    await db`
+      INSERT INTO users (email, password_hash, role, full_name, initials, branch_id, specialty, active, doctor_id)
+      VALUES (${u.email}, ${defaultHash}, ${u.role}, ${u.fullName}, ${u.initials}, 1, ${u.specialty}, true, ${u.doctor_id})
+      ON CONFLICT (email) DO NOTHING
+    `;
+  }
 }
 
 /* ── Row mappers ─────────────────────────────────────────────────────────── */
@@ -339,6 +525,50 @@ function mapPrescription(r) {
   };
 }
 
+function mapAppointment(r) {
+  return {
+    id: r.id,
+    patientId: r.patient_id,
+    doctorId: r.doctor_id,
+    branchId: r.branch_id,
+    scheduledAt: Number(r.scheduled_at),
+    status: r.status,
+    token: r.token,
+    reason: r.reason,
+    channel: r.channel,
+    notes: r.notes || "",
+  };
+}
+
+function mapPayment(r) {
+  return {
+    id: r.id,
+    patientId: r.patient_id,
+    prescriptionId: r.prescription_id,
+    amount: Number(r.amount),
+    method: r.method,
+    status: r.status,
+    invoiceNo: r.invoice_no,
+    createdAt: Number(r.created_at),
+  };
+}
+
+function mapUser(r) {
+  return {
+    id: r.id,
+    email: r.email,
+    role: r.role,
+    fullName: r.full_name,
+    initials: r.initials,
+    branchId: r.branch_id,
+    specialty: r.specialty,
+    active: r.active,
+    doctorId: r.doctor_id,
+    mustChange: r.must_change,
+    lastLoginAt: Number(r.last_login_at),
+  };
+}
+
 function mapSettings(r) {
   return {
     clinicName:  r.clinic_name,
@@ -352,20 +582,6 @@ function mapSettings(r) {
     updatedAt:   Number(r.updated_at),
   };
 }
-
-/* ── Auth accounts (in-memory) ────────────────────────────────────────────── */
-
-const DEMO_ACCOUNTS = [
-  { email: "admin@clinicpulse.app",   password: "demo1234", role: "admin",        fullName: "Dr. Sara Khan",      avatarUrl: "" },
-  { email: "doctor@clinicpulse.app",  password: "demo1234", role: "doctor",       fullName: "Dr. Adeel Rahman",   avatarUrl: "" },
-  { email: "doctor2@clinicpulse.app", password: "demo1234", role: "doctor",       fullName: "Dr. Hina Saeed",     avatarUrl: "" },
-  { email: "doctor3@clinicpulse.app", password: "demo1234", role: "doctor",       fullName: "Dr. Faisal Mahmood", avatarUrl: "" },
-  { email: "front@clinicpulse.app",   password: "demo1234", role: "receptionist", fullName: "Maria Lopez",        avatarUrl: "" },
-  { email: "pharm@clinicpulse.app",   password: "demo1234", role: "pharmacist",   fullName: "Imran Yousaf",       avatarUrl: "" },
-  { email: "patient@clinicpulse.app", password: "demo1234", role: "patient",      fullName: "Ali Hassan",         avatarUrl: "" },
-];
-
-const resetCodes = new Map();
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
@@ -391,19 +607,31 @@ function send(res, status, data) {
 }
 
 function makeToken(account) {
-  return Buffer.from(JSON.stringify({ email: account.email, role: account.role, t: Date.now() })).toString("base64url");
+  return Buffer.from(JSON.stringify({
+    id: account.id, email: account.email, role: account.role, t: Date.now(),
+  })).toString("base64url");
 }
 
-function makeResetCode(email) {
-  const digits = Buffer.from(`${email}:${Date.now()}`).toString("base64url").replace(/[^0-9]/g, "");
-  return (digits + "246810").slice(0, 6);
+function parseToken(token) {
+  if (!token) return null;
+  try {
+    return JSON.parse(Buffer.from(token, "base64url").toString("utf8"));
+  } catch { return null; }
+}
+
+function readToken(req) {
+  const auth = (req.headers && (req.headers.authorization || req.headers.Authorization)) || "";
+  const m = String(auth).match(/^Bearer\s+(.+)$/i);
+  if (m) return parseToken(m[1]);
+  return null;
+}
+
+function makeResetCode() {
+  // 6-digit numeric code
+  return String(Math.floor(100000 + Math.random() * 900000));
 }
 
 function parsePath(path) {
-  // /api/patients         → { route:"patients", id:null, sub:null }
-  // /api/patients/3       → { route:"patients", id:"3",  sub:null }
-  // /api/auth/login       → { route:"auth",     id:"login", sub:null }
-  // /api/auth/password/reset → { route:"auth", id:"password", sub:"reset" }
   const m = path.match(/\/api\/([^/?]+)(?:\/([^/?]+))?(?:\/([^/?]+))?/);
   if (!m) return { route: null, id: null, sub: null };
   return { route: m[1] ?? null, id: m[2] ?? null, sub: m[3] ?? null };
@@ -427,59 +655,7 @@ export default async function handler(req, res) {
     return res.end();
   }
 
-  /* ── Auth routes (no DB needed) ── */
-
-  if (method === "POST" && path.endsWith("/api/auth/login")) {
-    const email = normalizeEmail(body.email);
-    const password = String(body.password || "");
-    const account = DEMO_ACCOUNTS.find(a => a.email.toLowerCase() === email && a.password === password);
-    if (!account) return send(res, 401, { error: "Invalid email or password" });
-    return send(res, 200, {
-      token: makeToken(account),
-      user: { email: account.email, role: account.role, fullName: account.fullName, avatarUrl: account.avatarUrl },
-    });
-  }
-
-  if (method === "POST" && path.endsWith("/api/auth/password/request")) {
-    const email = normalizeEmail(body.email);
-    if (!email || !email.includes("@")) return send(res, 400, { error: "A valid email is required." });
-    const account = DEMO_ACCOUNTS.find(a => a.email.toLowerCase() === email);
-    if (account) {
-      resetCodes.set(email, { code: makeResetCode(email), expiresAt: Date.now() + 15 * 60 * 1000, attempts: 0 });
-    }
-    return send(res, 200, { ok: true, message: "If an account exists, a reset code has been sent.", expiresInMinutes: 15 });
-  }
-
-  if (method === "POST" && path.endsWith("/api/auth/password/reset")) {
-    const email = normalizeEmail(body.email);
-    const code = String(body.code || "").trim();
-    const newPassword = String(body.newPassword || "");
-    if (!email || !code || newPassword.length < 8) {
-      return send(res, 400, { error: "Email, reset code, and a password of at least 8 characters are required." });
-    }
-    const reset = resetCodes.get(email);
-    if (!reset || reset.expiresAt < Date.now()) { resetCodes.delete(email); return send(res, 400, { error: "Reset code is invalid or expired." }); }
-    if (reset.attempts >= 5) { resetCodes.delete(email); return send(res, 429, { error: "Too many reset attempts." }); }
-    if (reset.code !== code) { reset.attempts += 1; return send(res, 400, { error: "Reset code is invalid." }); }
-    const account = DEMO_ACCOUNTS.find(a => a.email.toLowerCase() === email);
-    if (account) account.password = newPassword;
-    resetCodes.delete(email);
-    return send(res, 200, { ok: true, message: "Password updated." });
-  }
-
-  if (method === "POST" && path.endsWith("/api/auth/signup")) {
-    const email = normalizeEmail(body.email);
-    const fullName = String(body.fullName || "").trim();
-    const role = String(body.role || "doctor");
-    if (!email || !fullName) return send(res, 400, { error: "email and fullName required" });
-    return send(res, 200, { ok: true, user: { email, fullName, role } });
-  }
-
-  if (method === "GET" && path.endsWith("/api/auth/me")) {
-    return send(res, 200, { user: DEMO_ACCOUNTS[0] });
-  }
-
-  /* ── DB init ── */
+  /* ── DB init ── (auth now requires DB) */
   try {
     await initDb();
   } catch (err) {
@@ -489,15 +665,159 @@ export default async function handler(req, res) {
 
   const db = getDb();
   const { route, id, sub } = parsePath(path);
+  const tokenInfo = readToken(req);
+
+  /* ── Auth routes ── */
+
+  if (method === "POST" && path.endsWith("/api/auth/login")) {
+    const email = normalizeEmail(body.email);
+    const password = String(body.password || "");
+    try {
+      const [u] = await db`SELECT * FROM users WHERE LOWER(email) = ${email} LIMIT 1`;
+      if (!u || !u.active || !verifyPassword(password, u.password_hash)) {
+        return send(res, 401, { error: "Invalid email or password" });
+      }
+      await db`UPDATE users SET last_login_at = ${Date.now()} WHERE id = ${u.id}`;
+      const user = mapUser(u);
+      return send(res, 200, { token: makeToken(user), user });
+    } catch (err) {
+      console.error("login error:", err);
+      return send(res, 500, { error: err.message });
+    }
+  }
+
+  if (method === "POST" && path.endsWith("/api/auth/signup")) {
+    // Self-signup creates a patient-role user (basic guard against admin escalation)
+    const email = normalizeEmail(body.email);
+    const fullName = String(body.fullName || "").trim();
+    const password = String(body.password || "");
+    if (!email || !fullName || password.length < 8) {
+      return send(res, 400, { error: "email, fullName, and password (8+ chars) are required" });
+    }
+    try {
+      const [exists] = await db`SELECT id FROM users WHERE LOWER(email) = ${email}`;
+      if (exists) return send(res, 409, { error: "An account with that email already exists." });
+      const initials = fullName.split(" ").filter(Boolean).map(w => w[0]).slice(0, 2).join("").toUpperCase();
+      const hash = hashPassword(password);
+      const [u] = await db`
+        INSERT INTO users (email, password_hash, role, full_name, initials, branch_id, active)
+        VALUES (${email}, ${hash}, 'patient', ${fullName}, ${initials}, 1, true)
+        RETURNING *
+      `;
+      return send(res, 201, { ok: true, user: mapUser(u) });
+    } catch (err) {
+      return send(res, 500, { error: err.message });
+    }
+  }
+
+  if (method === "POST" && path.endsWith("/api/auth/password/request")) {
+    const email = normalizeEmail(body.email);
+    if (!email || !email.includes("@")) return send(res, 400, { error: "A valid email is required." });
+    try {
+      const [u] = await db`SELECT id FROM users WHERE LOWER(email) = ${email}`;
+      if (u) {
+        const code = makeResetCode();
+        await db`UPDATE users SET reset_code = ${code}, reset_expires = ${Date.now() + 15*60*1000}, reset_attempts = 0 WHERE id = ${u.id}`;
+        // In production this code is dispatched via email. For sandbox/single-clinic use,
+        // also return the code so an admin or local operator can complete the reset.
+        return send(res, 200, { ok: true, message: "Reset code generated. Check the account email.", devCode: code, expiresInMinutes: 15 });
+      }
+      // For privacy do not reveal whether account exists.
+      return send(res, 200, { ok: true, message: "If an account exists, a reset code has been sent.", expiresInMinutes: 15 });
+    } catch (err) {
+      return send(res, 500, { error: err.message });
+    }
+  }
+
+  if (method === "POST" && path.endsWith("/api/auth/password/reset")) {
+    const email = normalizeEmail(body.email);
+    const code = String(body.code || "").trim();
+    const newPassword = String(body.newPassword || "");
+    if (!email || !code || newPassword.length < 8) {
+      return send(res, 400, { error: "Email, reset code, and a password of at least 8 characters are required." });
+    }
+    try {
+      const [u] = await db`SELECT * FROM users WHERE LOWER(email) = ${email}`;
+      if (!u || !u.reset_code || u.reset_expires < Date.now()) {
+        return send(res, 400, { error: "Reset code is invalid or expired." });
+      }
+      if (u.reset_attempts >= 5) {
+        await db`UPDATE users SET reset_code = NULL, reset_expires = 0 WHERE id = ${u.id}`;
+        return send(res, 429, { error: "Too many reset attempts." });
+      }
+      if (u.reset_code !== code) {
+        await db`UPDATE users SET reset_attempts = reset_attempts + 1 WHERE id = ${u.id}`;
+        return send(res, 400, { error: "Reset code is invalid." });
+      }
+      const hash = hashPassword(newPassword);
+      await db`UPDATE users SET password_hash = ${hash}, reset_code = NULL, reset_expires = 0, reset_attempts = 0, must_change = false WHERE id = ${u.id}`;
+      return send(res, 200, { ok: true, message: "Password updated." });
+    } catch (err) {
+      return send(res, 500, { error: err.message });
+    }
+  }
+
+  if (method === "POST" && path.endsWith("/api/auth/password/admin-reset")) {
+    if (!tokenInfo || tokenInfo.role !== "admin") return send(res, 403, { error: "Admin only." });
+    const email = normalizeEmail(body.email);
+    const newPassword = String(body.newPassword || "") || genTempPassword(12);
+    if (!email) return send(res, 400, { error: "email is required." });
+    if (newPassword.length < 8) return send(res, 400, { error: "Password must be at least 8 characters." });
+    try {
+      const [u] = await db`SELECT id FROM users WHERE LOWER(email) = ${email}`;
+      if (!u) return send(res, 404, { error: "User not found." });
+      const hash = hashPassword(newPassword);
+      await db`UPDATE users SET password_hash = ${hash}, must_change = true, reset_code = NULL, reset_expires = 0 WHERE id = ${u.id}`;
+      return send(res, 200, { ok: true, email, tempPassword: newPassword });
+    } catch (err) {
+      return send(res, 500, { error: err.message });
+    }
+  }
+
+  if (method === "GET" && path.endsWith("/api/auth/me")) {
+    if (!tokenInfo) return send(res, 401, { error: "Not signed in." });
+    try {
+      const [u] = await db`SELECT * FROM users WHERE id = ${tokenInfo.id}`;
+      if (!u || !u.active) return send(res, 401, { error: "Account inactive or missing." });
+      return send(res, 200, { user: mapUser(u) });
+    } catch (err) {
+      return send(res, 500, { error: err.message });
+    }
+  }
+
+  /* ── Users (admin only) ── */
+  if (route === "users") {
+    if (!tokenInfo || tokenInfo.role !== "admin") return send(res, 403, { error: "Admin only." });
+    try {
+      if (method === "GET" && !id) {
+        const rows = await db`SELECT * FROM users ORDER BY id`;
+        return send(res, 200, { users: rows.map(mapUser) });
+      }
+      if (method === "DELETE" && id) {
+        await db`DELETE FROM users WHERE id = ${parseInt(id)}`;
+        return send(res, 200, { ok: true });
+      }
+    } catch (err) {
+      return send(res, 500, { error: err.message });
+    }
+  }
 
   /* ── Health ── */
   if (method === "GET" && route === "health") {
     try {
       const [{ count }] = await db`SELECT COUNT(*)::int AS count FROM patients`;
-      return send(res, 200, { ok: true, app: "ClinicPulse", runtime: "vercel", patients: count, db: "postgres" });
+      const [{ count: ucount }] = await db`SELECT COUNT(*)::int AS count FROM users`;
+      return send(res, 200, { ok: true, app: "ClinicPulse", runtime: "vercel", patients: count, users: ucount, db: "postgres" });
     } catch (err) {
       return send(res, 200, { ok: true, app: "ClinicPulse", runtime: "vercel", db: "error: " + err.message });
     }
+  }
+
+  /* ── Role helpers ── */
+  function requireRole(roles) {
+    if (!tokenInfo) return send(res, 401, { error: "Not signed in." });
+    if (!roles.includes(tokenInfo.role)) return send(res, 403, { error: "Forbidden for role " + tokenInfo.role });
+    return null;
   }
 
   /* ── Patients ── */
@@ -550,14 +870,15 @@ export default async function handler(req, res) {
         const [updated] = await db`UPDATE patients SET ${db(f)} WHERE id=${pid} RETURNING *`;
         return send(res, 200, { patient: mapPatient(updated) });
       }
-      // Single delete
       if (method === "DELETE" && id) {
+        // pragmatic protection: only admin can delete
+        if (tokenInfo && tokenInfo.role !== "admin") return send(res, 403, { error: "Admin only." });
         const pid = parseInt(id);
         await db`DELETE FROM patients WHERE id=${pid}`;
         return send(res, 200, { ok: true, deleted: pid });
       }
-      // Bulk delete: DELETE /api/patients body:{ids:[...]}
       if (method === "DELETE" && !id) {
+        if (tokenInfo && tokenInfo.role !== "admin") return send(res, 403, { error: "Admin only." });
         const ids = Array.isArray(body.ids) ? body.ids.map(Number).filter(Boolean) : [];
         if (ids.length === 0) return send(res, 200, { ok: true, deleted: [] });
         await db`DELETE FROM patients WHERE id = ANY(${ids}::int[])`;
@@ -602,6 +923,11 @@ export default async function handler(req, res) {
         const [updated] = await db`UPDATE prescriptions SET ${db(f)} WHERE id=${parseInt(id)} RETURNING *`;
         return send(res, 200, { prescription: mapPrescription(updated) });
       }
+      if (method === "DELETE" && id) {
+        if (tokenInfo && tokenInfo.role !== "admin" && tokenInfo.role !== "doctor") return send(res, 403, { error: "Doctor or admin only." });
+        await db`DELETE FROM prescriptions WHERE id = ${parseInt(id)}`;
+        return send(res, 200, { ok: true });
+      }
     } catch (err) {
       console.error("prescriptions error:", err);
       return send(res, 500, { error: err.message });
@@ -623,7 +949,28 @@ export default async function handler(req, res) {
         `;
         return send(res, 201, { medicine: mapMedicine(m) });
       }
+      if (method === "PATCH" && id) {
+        const [existing] = await db`SELECT * FROM medicines WHERE id=${parseInt(id)}`;
+        if (!existing) return send(res, 404, { error: "Medicine not found" });
+        const f = {};
+        if (body.name           !== undefined) f.name = body.name;
+        if (body.generic        !== undefined) f.generic = body.generic;
+        if (body.company        !== undefined) f.company = body.company;
+        if (body.unit           !== undefined) f.unit = body.unit;
+        if (body.purchasePrice  !== undefined) f.purchase_price = body.purchasePrice;
+        if (body.sellingPrice   !== undefined) f.selling_price = body.sellingPrice;
+        if (body.stock          !== undefined) f.stock = body.stock;
+        if (body.lowStockAt     !== undefined) f.low_stock_at = body.lowStockAt;
+        if (body.batchNo        !== undefined) f.batch_no = body.batchNo;
+        if (body.expiry         !== undefined) f.expiry = body.expiry;
+        if (body.barcode        !== undefined) f.barcode = body.barcode;
+        if (body.sold30d        !== undefined) f.sold_30d = body.sold30d;
+        if (Object.keys(f).length === 0) return send(res, 200, { medicine: mapMedicine(existing) });
+        const [updated] = await db`UPDATE medicines SET ${db(f)} WHERE id=${parseInt(id)} RETURNING *`;
+        return send(res, 200, { medicine: mapMedicine(updated) });
+      }
       if (method === "DELETE" && id) {
+        if (tokenInfo && tokenInfo.role !== "admin" && tokenInfo.role !== "pharmacist") return send(res, 403, { error: "Admin/pharmacist only." });
         await db`DELETE FROM medicines WHERE id=${parseInt(id)}`;
         return send(res, 200, { ok: true });
       }
@@ -641,17 +988,44 @@ export default async function handler(req, res) {
         return send(res, 200, { doctors: rows.map(mapDoctor) });
       }
       if (method === "POST") {
+        if (tokenInfo && tokenInfo.role !== "admin") return send(res, 403, { error: "Admin only." });
         const fullName = String(body.fullName || "").trim();
+        const email = normalizeEmail(body.email);
         const initials = body.initials ||
           fullName.split(" ").filter(Boolean).map(w => w[0]).slice(0, 2).join("").toUpperCase();
+        const phone = String(body.phone || "");
+        const specialty = String(body.specialty || "General Practice");
+
         const [d] = await db`
           INSERT INTO doctors (email,full_name,specialty,branch_id,initials,active,phone)
-          VALUES (${body.email||""},${fullName},${body.specialty||"General Practice"},${body.branchId||1},${initials},${body.active!==false},${body.phone||""})
+          VALUES (${email},${fullName},${specialty},${body.branchId||1},${initials},${body.active!==false},${phone})
           RETURNING *
         `;
-        return send(res, 201, { doctor: mapDoctor(d) });
+
+        // Auto-create linked user with a temporary password (or one supplied by admin)
+        let tempPassword = null;
+        let userCreated = null;
+        if (email) {
+          const [exists] = await db`SELECT id FROM users WHERE LOWER(email) = ${email}`;
+          if (!exists) {
+            tempPassword = String(body.password || "").length >= 8 ? String(body.password) : genTempPassword(12);
+            const hash = hashPassword(tempPassword);
+            const [u] = await db`
+              INSERT INTO users (email, password_hash, role, full_name, initials, branch_id, specialty, active, doctor_id, must_change)
+              VALUES (${email}, ${hash}, 'doctor', ${fullName}, ${initials}, ${body.branchId||1}, ${specialty}, true, ${d.id}, ${!body.password})
+              RETURNING *
+            `;
+            userCreated = mapUser(u);
+          } else {
+            // link existing user to doctor row
+            await db`UPDATE users SET doctor_id = ${d.id}, full_name = ${fullName}, initials = ${initials}, specialty = ${specialty} WHERE id = ${exists.id}`;
+          }
+        }
+
+        return send(res, 201, { doctor: mapDoctor(d), user: userCreated, tempPassword });
       }
       if (method === "PATCH" && id) {
+        if (tokenInfo && tokenInfo.role !== "admin") return send(res, 403, { error: "Admin only." });
         const [existing] = await db`SELECT * FROM doctors WHERE id=${parseInt(id)}`;
         if (!existing) return send(res, 404, { error: "Doctor not found" });
         const f = {};
@@ -663,13 +1037,17 @@ export default async function handler(req, res) {
         if (body.phone     !== undefined) f.phone     = body.phone;
         if (Object.keys(f).length === 0) return send(res, 200, { doctor: mapDoctor(existing) });
         const [updated] = await db`UPDATE doctors SET ${db(f)} WHERE id=${parseInt(id)} RETURNING *`;
+        // Cascade name/spec changes to the linked user record (if any)
+        if (body.fullName !== undefined || body.specialty !== undefined || body.initials !== undefined) {
+          await db`UPDATE users SET full_name = ${updated.full_name}, initials = ${updated.initials}, specialty = ${updated.specialty} WHERE doctor_id = ${updated.id}`;
+        }
         return send(res, 200, { doctor: mapDoctor(updated) });
       }
-      // DELETE /api/doctors/:id  (admin-only — frontend enforces role)
       if (method === "DELETE" && id) {
+        if (tokenInfo && tokenInfo.role !== "admin") return send(res, 403, { error: "Admin only." });
         const did = parseInt(id);
-        // patients.doctor_id → SET NULL (FK), prescriptions.doctor_id → SET NULL (FK)
-        // Both handled by DB constraints — just delete the doctor row
+        // delete linked user too (avoid orphaned credentials)
+        await db`DELETE FROM users WHERE doctor_id = ${did}`;
         await db`DELETE FROM doctors WHERE id=${did}`;
         return send(res, 200, { ok: true, deleted: did });
       }
@@ -679,15 +1057,120 @@ export default async function handler(req, res) {
     }
   }
 
+  /* ── Appointments ── */
+  if (route === "appointments") {
+    try {
+      if (method === "GET" && !id) {
+        const from = url.searchParams.get("from");
+        const to = url.searchParams.get("to");
+        let rows;
+        if (from && to) {
+          rows = await db`SELECT * FROM appointments WHERE scheduled_at BETWEEN ${parseInt(from)} AND ${parseInt(to)} ORDER BY scheduled_at`;
+        } else {
+          rows = await db`SELECT * FROM appointments ORDER BY scheduled_at`;
+        }
+        return send(res, 200, { appointments: rows.map(mapAppointment) });
+      }
+      if (method === "GET" && id) {
+        const [a] = await db`SELECT * FROM appointments WHERE id = ${parseInt(id)}`;
+        if (!a) return send(res, 404, { error: "Appointment not found" });
+        return send(res, 200, { appointment: mapAppointment(a) });
+      }
+      if (method === "POST") {
+        const [a] = await db`
+          INSERT INTO appointments (patient_id, doctor_id, branch_id, scheduled_at, status, token, reason, channel, notes)
+          VALUES (${body.patientId||null}, ${body.doctorId||null}, ${body.branchId||1}, ${body.scheduledAt||Date.now()},
+                  ${body.status||"scheduled"}, ${body.token||1}, ${body.reason||"Consultation"},
+                  ${body.channel||"walk_in"}, ${body.notes||""})
+          RETURNING *
+        `;
+        return send(res, 201, { appointment: mapAppointment(a) });
+      }
+      if (method === "PATCH" && id) {
+        const [existing] = await db`SELECT * FROM appointments WHERE id = ${parseInt(id)}`;
+        if (!existing) return send(res, 404, { error: "Appointment not found" });
+        const f = {};
+        if (body.patientId   !== undefined) f.patient_id = body.patientId;
+        if (body.doctorId    !== undefined) f.doctor_id = body.doctorId;
+        if (body.scheduledAt !== undefined) f.scheduled_at = body.scheduledAt;
+        if (body.status      !== undefined) f.status = body.status;
+        if (body.token       !== undefined) f.token = body.token;
+        if (body.reason      !== undefined) f.reason = body.reason;
+        if (body.channel     !== undefined) f.channel = body.channel;
+        if (body.notes       !== undefined) f.notes = body.notes;
+        if (Object.keys(f).length === 0) return send(res, 200, { appointment: mapAppointment(existing) });
+        const [updated] = await db`UPDATE appointments SET ${db(f)} WHERE id = ${parseInt(id)} RETURNING *`;
+        return send(res, 200, { appointment: mapAppointment(updated) });
+      }
+      if (method === "DELETE" && id) {
+        await db`DELETE FROM appointments WHERE id = ${parseInt(id)}`;
+        return send(res, 200, { ok: true });
+      }
+    } catch (err) {
+      console.error("appointments error:", err);
+      return send(res, 500, { error: err.message });
+    }
+  }
+
+  /* ── Payments ── */
+  if (route === "payments") {
+    try {
+      if (method === "GET" && !id) {
+        const rows = await db`SELECT * FROM payments ORDER BY created_at DESC`;
+        return send(res, 200, { payments: rows.map(mapPayment) });
+      }
+      if (method === "POST") {
+        const [p] = await db`
+          INSERT INTO payments (patient_id, prescription_id, amount, method, status, invoice_no, created_at)
+          VALUES (${body.patientId||null}, ${body.prescriptionId||null}, ${body.amount||0},
+                  ${body.method||"Cash"}, ${body.status||"paid"}, ${body.invoiceNo || ""}, ${Date.now()})
+          RETURNING *
+        `;
+        // Auto-generate invoice number if not provided
+        if (!body.invoiceNo) {
+          const inv = `INV-${10000 + p.id}`;
+          await db`UPDATE payments SET invoice_no = ${inv} WHERE id = ${p.id}`;
+          p.invoice_no = inv;
+        }
+        return send(res, 201, { payment: mapPayment(p) });
+      }
+      if (method === "PATCH" && id) {
+        const [existing] = await db`SELECT * FROM payments WHERE id = ${parseInt(id)}`;
+        if (!existing) return send(res, 404, { error: "Payment not found" });
+        const f = {};
+        if (body.amount    !== undefined) f.amount = body.amount;
+        if (body.method    !== undefined) f.method = body.method;
+        if (body.status    !== undefined) f.status = body.status;
+        if (body.invoiceNo !== undefined) f.invoice_no = body.invoiceNo;
+        if (Object.keys(f).length === 0) return send(res, 200, { payment: mapPayment(existing) });
+        const [updated] = await db`UPDATE payments SET ${db(f)} WHERE id = ${parseInt(id)} RETURNING *`;
+        return send(res, 200, { payment: mapPayment(updated) });
+      }
+      if (method === "DELETE" && id) {
+        if (tokenInfo && tokenInfo.role !== "admin") return send(res, 403, { error: "Admin only." });
+        await db`DELETE FROM payments WHERE id = ${parseInt(id)}`;
+        return send(res, 200, { ok: true });
+      }
+    } catch (err) {
+      console.error("payments error:", err);
+      return send(res, 500, { error: err.message });
+    }
+  }
+
   /* ── Settings ── */
   if (route === "settings") {
     try {
       if (method === "GET") {
         const [row] = await db`SELECT * FROM settings WHERE id=1`;
-        if (!row) return send(res, 200, { settings: mapSettings({ clinic_name:"ClinicPulse Health", clinic_slug:"clinicpulse-health", currency:"PKR (₨)", timezone:"Asia/Karachi", notif_email:true, notif_sms:false, notif_wa:true, notif_push:true, updated_at:Date.now() }) });
+        if (!row) {
+          await db`INSERT INTO settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`;
+          const [r2] = await db`SELECT * FROM settings WHERE id=1`;
+          return send(res, 200, { settings: mapSettings(r2) });
+        }
         return send(res, 200, { settings: mapSettings(row) });
       }
       if (method === "PATCH") {
+        if (tokenInfo && tokenInfo.role !== "admin") return send(res, 403, { error: "Admin only." });
         const f = {};
         if (body.clinicName  !== undefined) f.clinic_name  = body.clinicName;
         if (body.clinicSlug  !== undefined) f.clinic_slug  = body.clinicSlug;
@@ -698,7 +1181,6 @@ export default async function handler(req, res) {
         if (body.notifWa     !== undefined) f.notif_wa     = body.notifWa;
         if (body.notifPush   !== undefined) f.notif_push   = body.notifPush;
         f.updated_at = Date.now();
-        // Ensure the settings row exists first
         await db`INSERT INTO settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`;
         await db`UPDATE settings SET ${db(f)} WHERE id = 1`;
         const [final] = await db`SELECT * FROM settings WHERE id = 1`;

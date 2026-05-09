@@ -82,10 +82,8 @@ export type Doctor = {
 /* ── Doctors ─────────────────────────────────────────────────────────────── */
 
 export const SEED_DOCTORS: Doctor[] = [
-  { id: 1, email: "admin@clinicpulse.app",   fullName: "Dr. Sara Khan",      specialty: "Internal Medicine", branchId: 1, initials: "SK", active: true, phone: "+92 300 1234501" },
-  { id: 2, email: "doctor@clinicpulse.app",  fullName: "Dr. Adeel Rahman",   specialty: "Cardiology",        branchId: 1, initials: "AR", active: true, phone: "+92 300 1234502" },
-  { id: 3, email: "doctor2@clinicpulse.app", fullName: "Dr. Hina Saeed",     specialty: "Pediatrics",        branchId: 1, initials: "HS", active: true, phone: "+92 300 1234503" },
-  { id: 4, email: "doctor3@clinicpulse.app", fullName: "Dr. Faisal Mahmood", specialty: "Pulmonology",       branchId: 1, initials: "FM", active: true, phone: "+92 300 1234504" },
+  { id: 1, email: "admin@clinicpulse.app",  fullName: "Dr. Muhammad Usman", specialty: "Internal Medicine", branchId: 1, initials: "MU", active: true, phone: "+92 300 1234501" },
+  { id: 2, email: "doctor@clinicpulse.app", fullName: "Dr. Mahroona Laraib", specialty: "General Practice",  branchId: 1, initials: "ML", active: true, phone: "+92 300 1234502" },
 ];
 
 /* ── Medicines ────────────────────────────────────────────────────────────── */
@@ -182,7 +180,7 @@ export const SEED_PATIENTS: Patient[] = [
     chronic: ["Asthma"],
     vaccinations: ["Hep B", "Tdap", "COVID-19 booster"],
     branchId: 1,
-    doctorId: 3,
+    doctorId: 2,
     diagnosis: "Asthma exacerbation",
     lastVisitAt: ts(7),
     createdAt: ts(200),
@@ -192,7 +190,7 @@ export const SEED_PATIENTS: Patient[] = [
       {
         id: 1,
         date: ts(7),
-        doctorId: 3,
+        doctorId: 2,
         diagnosis: "Asthma exacerbation",
         soap: {
           s: "Patient reports wheezing and shortness of breath for 2 days, worse at night.",
@@ -320,7 +318,7 @@ export const SEED_PRESCRIPTIONS: Prescription[] = [
   {
     id: 3,
     patientId: 2,
-    doctorId: 3,
+    doctorId: 2,
     createdAt: ts(7),
     diagnosis: "Asthma exacerbation",
     status: "active",
@@ -447,24 +445,22 @@ export const BRANCHES = [
 ];
 
 export const USERS = [
-  { id: 1, email: "admin@clinicpulse.app",   fullName: "Dr. Sara Khan",    role: "admin"        as const, branchId: 1, specialty: "Internal Medicine", initials: "SK", twoFactor: true,  active: true },
-  { id: 2, email: "doctor@clinicpulse.app",  fullName: "Dr. Adeel Rahman", role: "doctor"       as const, branchId: 1, specialty: "Cardiology",        initials: "AR", twoFactor: true,  active: true },
-  { id: 3, email: "doctor2@clinicpulse.app", fullName: "Dr. Hina Saeed",   role: "doctor"       as const, branchId: 1, specialty: "Pediatrics",        initials: "HS", twoFactor: false, active: true },
-  { id: 4, email: "doctor3@clinicpulse.app", fullName: "Dr. Faisal Mahmood", role: "doctor"     as const, branchId: 1, specialty: "Pulmonology",       initials: "FM", twoFactor: true,  active: true },
-  { id: 5, email: "front@clinicpulse.app",   fullName: "Maria Lopez",      role: "receptionist" as const, branchId: 1, specialty: null,                initials: "ML", twoFactor: false, active: true },
-  { id: 6, email: "pharm@clinicpulse.app",   fullName: "Imran Yousaf",     role: "pharmacist"   as const, branchId: 1, specialty: null,                initials: "IY", twoFactor: false, active: true },
-  { id: 7, email: "patient@clinicpulse.app", fullName: "Ali Hassan",       role: "patient"      as const, branchId: 1, specialty: null,                initials: "AH", twoFactor: false, active: true },
+  { id: 1, email: "admin@clinicpulse.app",   fullName: "Dr. Muhammad Usman",  role: "admin"        as const, branchId: 1, specialty: "Internal Medicine", initials: "MU", twoFactor: true,  active: true },
+  { id: 2, email: "doctor@clinicpulse.app",  fullName: "Dr. Mahroona Laraib", role: "doctor"       as const, branchId: 1, specialty: "General Practice",  initials: "ML", twoFactor: true,  active: true },
+  { id: 3, email: "front@clinicpulse.app",   fullName: "Maria Lopez",         role: "receptionist" as const, branchId: 1, specialty: null,                initials: "ML", twoFactor: false, active: true },
+  { id: 4, email: "pharm@clinicpulse.app",   fullName: "Imran Yousaf",        role: "pharmacist"   as const, branchId: 1, specialty: null,                initials: "IY", twoFactor: false, active: true },
+  { id: 5, email: "patient@clinicpulse.app", fullName: "Ali Hassan",          role: "patient"      as const, branchId: 1, specialty: null,                initials: "AH", twoFactor: false, active: true },
 ];
 
 export type Role = "admin" | "doctor" | "receptionist" | "pharmacist" | "patient";
 
 export const AUDIT_LOG = [
-  { id: 1, user: "Dr. Sara Khan",    action: "Updated patient",      entity: "Patient CP-2001", at: Date.now() - 10 * 60 * 1000 },
-  { id: 2, user: "Maria Lopez",      action: "Booked appointment",   entity: "Appt #4421",      at: Date.now() - 22 * 60 * 1000 },
-  { id: 3, user: "Imran Yousaf",     action: "Stock adjustment",     entity: "Med #14",         at: Date.now() - 45 * 60 * 1000 },
-  { id: 4, user: "Dr. Adeel Rahman", action: "Created prescription", entity: "Rx #4",           at: Date.now() - 60 * 60 * 1000 },
-  { id: 5, user: "Dr. Sara Khan",    action: "Logged in",            entity: "Session",         at: Date.now() - 90 * 60 * 1000 },
-  { id: 6, user: "Dr. Hina Saeed",   action: "Marked visit done",    entity: "Patient CP-2002", at: Date.now() - 110 * 60 * 1000 },
+  { id: 1, user: "Dr. Muhammad Usman",  action: "Updated patient",      entity: "Patient CP-2001", at: Date.now() - 10 * 60 * 1000 },
+  { id: 2, user: "Maria Lopez",          action: "Booked appointment",   entity: "Appt #4421",      at: Date.now() - 22 * 60 * 1000 },
+  { id: 3, user: "Imran Yousaf",         action: "Stock adjustment",     entity: "Med #14",         at: Date.now() - 45 * 60 * 1000 },
+  { id: 4, user: "Dr. Mahroona Laraib",  action: "Created prescription", entity: "Rx #4",           at: Date.now() - 60 * 60 * 1000 },
+  { id: 5, user: "Dr. Muhammad Usman",   action: "Logged in",            entity: "Session",         at: Date.now() - 90 * 60 * 1000 },
+  { id: 6, user: "Dr. Mahroona Laraib",  action: "Marked visit done",    entity: "Patient CP-2002", at: Date.now() - 110 * 60 * 1000 },
 ];
 
 export const ACTIVE_SESSIONS = [
@@ -526,7 +522,7 @@ export const APPOINTMENTS: Appointment[] = (() => {
       const pId = patientIds[t % patientIds.length];
       const status = d < 0 ? "done" : d === 0 ? statuses[t] || "scheduled" : "scheduled";
       out.push({
-        id: id++, patientId: pId, doctorId: (pId % 4) + 1, branchId: 1,
+        id: id++, patientId: pId, doctorId: (pId % 2) + 1, branchId: 1,
         scheduledAt: date.getTime(), status,
         token: t + 1,
         reason: reasons[t % reasons.length],
